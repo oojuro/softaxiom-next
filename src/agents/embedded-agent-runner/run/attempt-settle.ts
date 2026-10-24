@@ -376,7 +376,7 @@ export async function runEmbeddedAttemptSettledPhase(
   }
 
   const beforeAgentFinalizeRevisionReason = getBeforeAgentFinalizeRevisionReason();
-  const result = completeEmbeddedAttemptResult(input, settledStream, {
+  const result = await completeEmbeddedAttemptResult(input, settledStream, {
     ...promptState,
     sessionIdUsed,
     sessionFileUsed,

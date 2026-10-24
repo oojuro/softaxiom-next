@@ -55,7 +55,11 @@ import {
   registerConfigWriteListener,
 } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions.js";
-import { applySessionPatchProjection } from "../config/sessions/session-accessor.js";
+import { resolveAgentMainSessionKey } from "../config/sessions/main-session.js";
+import {
+  applySessionPatchProjection,
+  patchSessionEntryCore,
+} from "../config/sessions/session-accessor.js";
 import {
   mergeAssistantText,
   resolveAssistantTextInput,
@@ -114,6 +118,7 @@ import {
   normalizeAgentId,
 } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { sessionDeliveryOrigin } from "../utils/delivery-context.read.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel.js";
 import { applyQueueDropPolicy, waitForQueueDebounce } from "../utils/queue-helpers.js";
 import {
@@ -160,6 +165,43 @@ type LocalPendingMessage = {
   messageIndex: number;
   message: string;
 };
+
+/** Record an explicitly admitted local chat without changing a bound conversation's identity. */
+async function recordLocalDirectChat(params: {
+  storePath: string;
+  sessionKey: string;
+  sessionId?: string;
+  assertCurrent: () => void;
+}) {
+  params.assertCurrent();
+  await patchSessionEntryCore(
+    { storePath: params.storePath, sessionKey: params.sessionKey },
+    (entry) => {
+      params.assertCurrent();
+      if (params.sessionId && entry.sessionId !== params.sessionId) {
+        throw new Error("Local chat session changed before admission.");
+      }
+      if (
+        entry.chatType ||
+        sessionDeliveryOrigin(entry)?.chatType ||
+        entry.spawnedBy ||
+        entry.groupId
+      ) {
+        return null;
+      }
+      return { chatType: "direct" };
+    },
+    {
+      ...(!params.sessionId
+        ? { fallbackEntry: { sessionId: randomUUID(), updatedAt: Date.now() } }
+        : {}),
+      preserveActivity: true,
+      requireWriteSuccess: true,
+      workerGuard: { assertMutationAllowed: params.assertCurrent },
+    },
+  );
+  params.assertCurrent();
+}
 
 export class EmbeddedTuiBackend implements TuiBackend {
   readonly connection = { url: "local embedded" };
@@ -646,6 +688,16 @@ export class EmbeddedTuiBackend implements TuiBackend {
       armSessionDiffBaselineCapture: true,
       emitCommandHooks: Boolean(opts.parentSessionKey),
       commandSource: "tui:embedded",
+      afterCreate: async (created) => {
+        if (created.isNew) {
+          await recordLocalDirectChat({
+            storePath: created.storePath,
+            sessionKey: created.key,
+            sessionId: created.entry.sessionId,
+            assertCurrent: () => this.scheduler.signal.throwIfAborted(),
+          });
+        }
+      },
       loadGatewayModelCatalogSnapshot: () =>
         loadPreparedModelCatalogSnapshot({
           config: cfg,
@@ -1288,11 +1340,20 @@ export class EmbeddedTuiBackend implements TuiBackend {
         return;
       }
       const loadOptions = opts.agentId ? { agentId: opts.agentId } : undefined;
-      const { agentId, canonicalKey, entry } = await loadGatewaySessionEntryReadOnlyInWorker({
-        cfg: getRuntimeConfig(),
-        key: opts.sessionKey,
-        ...loadOptions,
-      });
+      const { cfg, agentId, canonicalKey, entry, storePath } =
+        await loadGatewaySessionEntryReadOnlyInWorker({
+          cfg: getRuntimeConfig(),
+          key: opts.sessionKey,
+          ...loadOptions,
+        });
+      if (canonicalKey === resolveAgentMainSessionKey({ cfg, agentId })) {
+        await recordLocalDirectChat({
+          storePath,
+          sessionKey: canonicalKey,
+          sessionId: entry?.sessionId,
+          assertCurrent: () => controller.signal.throwIfAborted(),
+        });
+      }
       const result = await agentCommandFromIngress(
         {
           // The per-message timestamp prefix is applied at the single LLM

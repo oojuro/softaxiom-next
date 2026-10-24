@@ -58,6 +58,7 @@ const runBtwSideQuestionMock = vi.fn();
 const formatSessionUsageCostSummaryMock = vi.fn();
 const updateSessionStoreMock = vi.fn();
 const applySessionPatchProjectionMock = vi.fn();
+const patchSessionEntryCoreMock = vi.fn();
 const projectSessionsPatchEntryMock = vi.fn();
 const projectSessionPatchResultMock = vi.fn();
 const readAcpSessionMetaForEntriesMock =
@@ -189,6 +190,7 @@ vi.mock("../config/sessions.js", () => ({
 }));
 
 vi.mock("../config/sessions/session-accessor.js", () => ({
+  patchSessionEntryCore: (...args: unknown[]) => patchSessionEntryCoreMock(...args),
   applySessionPatchProjection: (...args: unknown[]) => applySessionPatchProjectionMock(...args),
 }));
 
@@ -401,6 +403,7 @@ describe("EmbeddedTuiBackend", () => {
     vi.useFakeTimers();
     vi.setSystemTime(embeddedEventTimestamp);
     agentCommandFromIngressMock.mockReset();
+    patchSessionEntryCoreMock.mockReset().mockResolvedValue(null);
     queueEmbeddedAgentMessageWithOutcomeAsyncMock.mockReset();
     claimPendingEmbeddedAgentQuestionAnswerMock.mockReset().mockResolvedValue(null);
     resolveActiveEmbeddedRunSessionIdMock.mockReset();
@@ -625,6 +628,73 @@ describe("EmbeddedTuiBackend", () => {
     }
   });
 
+  it.each([
+    { chatType: undefined, origin: undefined, spawnedBy: undefined, patch: { chatType: "direct" } },
+    { chatType: "group", origin: undefined, spawnedBy: undefined, patch: null },
+    { chatType: "channel", origin: undefined, spawnedBy: undefined, patch: null },
+    { chatType: undefined, origin: { chatType: "group" }, spawnedBy: undefined, patch: null },
+    { chatType: undefined, origin: undefined, spawnedBy: "agent:main:parent", patch: null },
+  ])("records only missing main chat identity (chat=$chatType, parent=$spawnedBy)", async (row) => {
+    agentCommandFromIngressMock.mockResolvedValue({ payloads: [], meta: {} });
+    const backend = new EmbeddedTuiBackend();
+    backend.start();
+    try {
+      await backend.sendChat({
+        sessionKey: "agent:main:main",
+        message: "hello",
+        runId: "main-kind",
+      });
+      await vi.waitFor(() => expect(patchSessionEntryCoreMock).toHaveBeenCalledTimes(1));
+      const [scope, update, options] = patchSessionEntryCoreMock.mock.calls[0]!;
+      expect(scope.sessionKey).toBe("agent:main:main");
+      expect(
+        update({
+          sessionId: "main-session",
+          updatedAt: 1,
+          chatType: row.chatType,
+          spawnedBy: row.spawnedBy,
+          ...(row.origin
+            ? { delivery: { kind: "external", origin: row.origin, context: {}, route: {} } }
+            : {}),
+        }),
+      ).toEqual(row.patch);
+      expect(options).toMatchObject({ preserveActivity: true, requireWriteSuccess: true });
+    } finally {
+      await backend.stop();
+    }
+  });
+
+  it.each([true, false])(
+    "records direct identity only on an exact new local chat receipt (new=%s)",
+    async (isNew) => {
+      const created = {
+        key: "agent:main:tui-created",
+        agentId: "main",
+        entry: { sessionId: "created-session", updatedAt: 1 },
+        storePath: "/tmp/openclaw-sessions.json",
+        isNew,
+      };
+      createGatewaySessionMock.mockImplementationOnce(async ({ afterCreate }) => {
+        await afterCreate(created);
+        return { ok: true, ...created, resolved: {}, resetExisting: false };
+      });
+      const backend = new EmbeddedTuiBackend();
+      try {
+        await backend.createSession({ key: created.key, agentId: "main" });
+        expect(patchSessionEntryCoreMock).toHaveBeenCalledTimes(isNew ? 1 : 0);
+        if (isNew) {
+          const [scope, update] = patchSessionEntryCoreMock.mock.calls[0]!;
+          expect(scope.sessionKey).toBe(created.key);
+          expect(update(created.entry)).toEqual({ chatType: "direct" });
+          expect(update({ ...created.entry, chatType: "group" })).toBeNull();
+          expect(() => update({ ...created.entry, sessionId: "replacement" })).toThrow(/changed/);
+        }
+      } finally {
+        await backend.stop();
+      }
+    },
+  );
+
   it("bridges assistant and lifecycle events into chat events", async () => {
     const pending = deferred<EmbeddedAgentResult>();
     agentCommandFromIngressMock.mockReturnValueOnce(pending.promise);
@@ -647,6 +717,7 @@ describe("EmbeddedTuiBackend", () => {
       runId: "run-local-1",
       timeoutMs: 300_000,
     });
+    await flushMicrotasks();
     expect(agentCommandFromIngressMock).toHaveBeenCalledTimes(1);
     expect(agentCommandFromIngressMock.mock.calls[0]?.[0].timeout).toBe("300");
 
@@ -2372,6 +2443,7 @@ describe("EmbeddedTuiBackend", () => {
       backend.start();
       await sendMainChat(backend, message, "run-local-idle-stop");
 
+      await flushMicrotasks();
       expect(agentCommandFromIngressMock).toHaveBeenCalledTimes(1);
 
       pending.resolve({ payloads: [{ text: "idle stop prompt" }], meta: {} });
