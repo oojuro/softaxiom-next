@@ -6,7 +6,7 @@ import type {
 } from "../../packages/gateway-protocol/src/index.js";
 import { CHAT_HISTORY_MAX_ENTRIES } from "../../packages/gateway-protocol/src/schema/chat-history-constants.js";
 import { readAcpSessionMetaForEntries } from "../acp/runtime/session-meta-readonly.js";
-import { agentCommandFromIngress } from "../agents/agent-command.js";
+import { agentCommand } from "../agents/agent-command.js";
 import { isAgentLifecycleYieldedWaiting } from "../agents/agent-lifecycle-parent-state.js";
 import { findAgentRunTerminalOutcome } from "../agents/agent-run-terminal-error.js";
 import {
@@ -1354,7 +1354,7 @@ export class EmbeddedTuiBackend implements TuiBackend {
           assertCurrent: () => controller.signal.throwIfAborted(),
         });
       }
-      const result = await agentCommandFromIngress(
+      const result = await agentCommand(
         {
           // The per-message timestamp prefix is applied at the single LLM
           // boundary (normalizeMessagesForLlmBoundary) from each message's own

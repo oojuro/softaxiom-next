@@ -51,6 +51,7 @@ type EmbeddedAgentResult = {
 let EmbeddedTuiBackend: typeof EmbeddedTuiBackendType;
 
 const agentCommandFromIngressMock = vi.fn();
+const genericAgentIngressMock = vi.fn();
 const queueEmbeddedAgentMessageWithOutcomeAsyncMock = vi.fn();
 const claimPendingEmbeddedAgentQuestionAnswerMock = vi.fn();
 const resolveActiveEmbeddedRunSessionIdMock = vi.fn();
@@ -135,7 +136,8 @@ let registeredListener: ((evt: unknown) => void) | undefined;
 const embeddedEventTimestamp = Date.parse("2026-05-09T07:26:00.000Z");
 
 vi.mock("../agents/agent-command.js", () => ({
-  agentCommandFromIngress: (...args: unknown[]) => agentCommandFromIngressMock(...args),
+  agentCommand: (...args: unknown[]) => agentCommandFromIngressMock(...args),
+  agentCommandFromIngress: (...args: unknown[]) => genericAgentIngressMock(...args),
 }));
 
 vi.mock("../agents/embedded-agent-runner/runs.js", () => ({
@@ -403,6 +405,7 @@ describe("EmbeddedTuiBackend", () => {
     vi.useFakeTimers();
     vi.setSystemTime(embeddedEventTimestamp);
     agentCommandFromIngressMock.mockReset();
+    genericAgentIngressMock.mockReset();
     patchSessionEntryCoreMock.mockReset().mockResolvedValue(null);
     queueEmbeddedAgentMessageWithOutcomeAsyncMock.mockReset();
     claimPendingEmbeddedAgentQuestionAnswerMock.mockReset().mockResolvedValue(null);
@@ -623,6 +626,7 @@ describe("EmbeddedTuiBackend", () => {
         deliver: input.deliver,
         allowModelOverride: false,
       });
+      expect(genericAgentIngressMock).not.toHaveBeenCalled();
     } finally {
       await backend.stop();
     }
