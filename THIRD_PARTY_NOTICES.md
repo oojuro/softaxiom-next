@@ -109,3 +109,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Soft Axiom integration
+
+The inherited OpenClaw application remains MIT-licensed. Original Soft Axiom files
+marked `SPDX-License-Identifier: Apache-2.0` use [LICENSE.softaxiom](LICENSE.softaxiom),
+including the `sa` entry point and the Soft Axiom memory/provider plugins. Their
+component license files and all inherited upstream notices are retained.

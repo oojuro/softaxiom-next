@@ -1,0 +1,25 @@
+{
+  "name": "@softaxiom/commandcode-provider",
+  "version": "2026.10.4",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "commandcode model provider for Soft Axiom",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.10.4"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*",
+    "openclaw": "workspace:*"
+  }
+}

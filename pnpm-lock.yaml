@@ -670,6 +670,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/actual:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
+
   extensions/admin-http-rpc:
     devDependencies:
       '@openclaw/plugin-sdk':
@@ -1023,6 +1032,15 @@ importers:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+
+  extensions/commandcode:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/copilot:
     dependencies:
@@ -1867,6 +1885,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  extensions/nebius-token-factory:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
+
   extensions/nextcloud-talk:
     dependencies:
       saxes:
@@ -1907,6 +1934,15 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
+
+  extensions/nous-portal:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       openclaw:
         specifier: workspace:*
         version: link:../..
@@ -2185,6 +2221,15 @@ importers:
         specifier: workspace:*
         version: link:../..
 
+  extensions/ramp-router:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
+
   extensions/reef:
     dependencies:
       '@noble/ciphers':
@@ -2299,6 +2344,22 @@ importers:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+
+  extensions/softaxiom-memory:
+    dependencies:
+      typebox:
+        specifier: 1.3.36
+        version: 1.3.36
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      commander:
+        specifier: 15.0.0
+        version: 15.0.0
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/stepfun:
     devDependencies:
@@ -2466,6 +2527,15 @@ importers:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+
+  extensions/upstage:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+      openclaw:
+        specifier: workspace:*
+        version: link:../..
 
   extensions/vault:
     devDependencies:

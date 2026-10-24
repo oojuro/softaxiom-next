@@ -1,3 +1,4 @@
+import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { err as resultError, ok, type Result } from "@openclaw/normalization-core/result";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -84,10 +85,12 @@ export function resolveAuthorizedDreamingSidecar(params: {
   ) {
     return null;
   }
-  const dreamingConfig = resolveMemoryDreamingConfig({
-    pluginConfig: resolveMemoryDreamingPluginConfig(params.cfg),
-    cfg: params.cfg,
-  });
+  const pluginConfig = resolveMemoryDreamingPluginConfig(params.cfg);
+  // A different memory owner must explicitly opt into a second consolidation engine.
+  if (asNullableRecord(pluginConfig?.dreaming)?.enabled !== true) {
+    return null;
+  }
+  const dreamingConfig = resolveMemoryDreamingConfig({ pluginConfig, cfg: params.cfg });
   if (
     !dreamingConfig.enabled ||
     !params.normalized.enabled ||

@@ -1,0 +1,76 @@
+{
+  "id": "ramp-router",
+  "name": "Ramp Router",
+  "categories": [
+    "models"
+  ],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providers": [
+    "ramp-router",
+    "router",
+    "ramp",
+    "router.com"
+  ],
+  "providerAuthAliases": {
+    "router": "ramp-router",
+    "ramp": "ramp-router",
+    "router.com": "ramp-router"
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "ramp-router",
+        "envVars": [
+          "RAMP_ROUTER_API_KEY",
+          "ROUTER_API_KEY"
+        ]
+      }
+    ]
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "ramp-router-native",
+      "baseUrls": [
+        "https://api.router.com/v1"
+      ]
+    }
+  ],
+  "providerAuthChoices": [
+    {
+      "provider": "ramp-router",
+      "method": "api-key",
+      "choiceId": "ramp-router-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "Ramp Router API key",
+      "groupId": "ramp-router",
+      "groupLabel": "Ramp Router",
+      "optionKey": "rampRouterApiKey",
+      "cliFlag": "--ramp-router-api-key",
+      "cliOption": "--ramp-router-api-key <key>",
+      "cliDescription": "Ramp Router API key"
+    }
+  ],
+  "modelCatalog": {
+    "discovery": {
+      "ramp-router": "refreshable"
+    },
+    "providers": {
+      "ramp-router": {
+        "baseUrl": "https://api.router.com/v1",
+        "api": "openai-responses",
+        "models": [],
+        "headers": {
+          "User-Agent": "SoftAxiom/2026.10.4"
+        }
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

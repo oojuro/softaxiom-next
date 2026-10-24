@@ -1,0 +1,35 @@
+{
+  "name": "@softaxiom/memory",
+  "version": "2026.10.4",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Tiered memory and Oojuro journal for the Soft Axiom application",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "build": {
+      "workerEntries": [
+        "./store-worker.ts",
+        "./checkpoint-worker.ts"
+      ]
+    }
+  },
+  "dependencies": {
+    "typebox": "1.3.36"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.10.4"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "commander": "15.0.0",
+    "openclaw": "workspace:*",
+    "@openclaw/plugin-sdk": "workspace:*"
+  }
+}

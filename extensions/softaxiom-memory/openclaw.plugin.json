@@ -1,0 +1,51 @@
+{
+  "id": "softaxiom-memory",
+  "name": "Soft Axiom Memory",
+  "description": "Bounded hot/warm/cool memory, diary and durable Oojuro evidence.",
+  "kind": "memory",
+  "categories": [
+    "memory"
+  ],
+  "activation": {
+    "onStartup": true,
+    "onCommands": [
+      "memory"
+    ]
+  },
+  "cliCommands": [
+    {
+      "name": "memory",
+      "description": "Inspect and curate Soft Axiom memory and Oojuro evidence",
+      "hasSubcommands": true
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "oojuro": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timezone": {
+        "type": "string"
+      },
+      "capture": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  },
+  "contracts": {
+    "tools": [
+      "memory_search",
+      "memory_get",
+      "softaxiom_memory"
+    ]
+  },
+  "toolMetadata": {
+    "memory_get": {
+      "replaySafe": true
+    }
+  }
+}

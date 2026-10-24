@@ -10,6 +10,7 @@ import type { PluginCandidate } from "./discovery.js";
 import {
   createPluginCandidatesFromManifestRegistry,
   preparePluginLoadRecord,
+  resolveAuthorizedDreamingSidecar,
   validatePluginConfig as validatePluginConfigByOrigin,
 } from "./loader-shared.js";
 import { loadOpenClawPluginCliRegistry, loadOpenClawPlugins } from "./loader.js";
@@ -440,3 +441,37 @@ module.exports = { id: "source-fixture", register(api) {
     );
   },
 );
+
+describe("exclusive memory consolidation", () => {
+  it.each([undefined, false, true])("requires explicit dreaming opt-in (%s)", (enabled) => {
+    const cfg: OpenClawConfig = {
+      plugins: {
+        slots: { memory: "custom-memory" },
+        entries: {
+          "custom-memory": {
+            enabled: true,
+            ...(enabled !== undefined ? { config: { dreaming: { enabled } } } : {}),
+          },
+        },
+      },
+    };
+    const activationSource = createPluginActivationSource({ config: cfg });
+    const plugins: PluginManifestRecord[] = ["custom-memory", "memory-core"].map((id) => ({
+      ...manifestRecord,
+      id,
+      kind: "memory",
+    }));
+    const result = resolveAuthorizedDreamingSidecar({
+      cfg,
+      normalized: activationSource.plugins,
+      activationSource,
+      manifestRegistry: { plugins, diagnostics: [] },
+      memorySlot: "custom-memory",
+    });
+    expect(result).toEqual(
+      enabled === true
+        ? { engineId: "memory-core", selectedMemoryPluginId: "custom-memory" }
+        : null,
+    );
+  });
+});

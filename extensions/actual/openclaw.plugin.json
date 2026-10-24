@@ -1,0 +1,98 @@
+{
+  "id": "actual",
+  "name": "Actual Computer",
+  "categories": [
+    "models"
+  ],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providers": [
+    "actual",
+    "actual-computer",
+    "actualcomputer",
+    "aci",
+    "actual-local"
+  ],
+  "providerAuthAliases": {
+    "actual-computer": "actual",
+    "actualcomputer": "actual",
+    "aci": "actual"
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "actual",
+        "envVars": [
+          "ACTUAL_API_KEY"
+        ]
+      },
+      {
+        "id": "actual-local",
+        "authMethods": [
+          "local"
+        ],
+        "envVars": []
+      }
+    ]
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "actual-native",
+      "baseUrls": [
+        "https://api.actual.inc/v1"
+      ]
+    }
+  ],
+  "providerAuthChoices": [
+    {
+      "provider": "actual",
+      "method": "api-key",
+      "choiceId": "actual-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "Actual Computer API key",
+      "groupId": "actual",
+      "groupLabel": "Actual Computer",
+      "optionKey": "actualApiKey",
+      "cliFlag": "--actual-api-key",
+      "cliOption": "--actual-api-key <key>",
+      "cliDescription": "Actual Computer API key"
+    },
+    {
+      "provider": "actual-local",
+      "method": "local",
+      "choiceId": "actual-local",
+      "choiceLabel": "Actual local server (no key)",
+      "groupId": "actual",
+      "groupLabel": "Actual Computer"
+    }
+  ],
+  "modelCatalog": {
+    "discovery": {
+      "actual": "refreshable",
+      "actual-local": "refreshable"
+    },
+    "providers": {
+      "actual": {
+        "baseUrl": "https://api.actual.inc/v1",
+        "api": "openai-completions",
+        "models": []
+      },
+      "actual-local": {
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "api": "openai-completions",
+        "auth": "none",
+        "models": []
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "syntheticAuthRefs": [
+    "actual-local"
+  ]
+}

@@ -38,6 +38,7 @@ import {
   type PluginRuntimeLoadContext,
 } from "./runtime/load-context.js";
 import { resolvePluginRuntimeLoadContext } from "./runtime/load-context.resolve.js";
+import { hasKind, resolveSlotSelection } from "./slots.js";
 import type {
   OpenClawPluginCliContext,
   OpenClawPluginCliRootCommandDescriptor,
@@ -184,7 +185,7 @@ function resolvePrimaryCommandManifestPluginIds(
   if (!normalizedPrimary) {
     return undefined;
   }
-  return resolveManifestActivationPluginIds({
+  const candidates = resolveManifestActivationPluginIds({
     trigger: {
       kind: "command",
       command: normalizedPrimary,
@@ -194,6 +195,50 @@ function resolvePrimaryCommandManifestPluginIds(
     env: context.env,
     manifestRecords: context.manifestRegistry?.plugins,
   });
+  // CLI inspection intentionally permits inactive plugins for setup commands.
+  // When exclusive owners share a command, that must not let an inactive owner
+  // replace the selected owner's descriptor or registrar by discovery order.
+  let owners = candidates;
+  for (const [kind, slotKey] of [
+    ["memory", "memory"],
+    ["context-engine", "contextEngine"],
+  ] as const) {
+    const selection = resolveSlotSelection(slotKey, context.config.plugins?.slots?.[slotKey]);
+    if (selection.kind === "off" || !owners.includes(selection.pluginId)) {
+      continue;
+    }
+    const selected = context.manifestRegistry?.plugins.find(
+      (plugin) => plugin.id === selection.pluginId,
+    );
+    if (!selected || !hasKind(selected.kind, kind)) {
+      continue;
+    }
+    owners = owners.filter(
+      (id) =>
+        id === selection.pluginId ||
+        !context.manifestRegistry?.plugins.some(
+          (plugin) => plugin.id === id && hasKind(plugin.kind, kind),
+        ),
+    );
+  }
+  return owners;
+}
+
+function commandOwnerManifest(
+  context: PluginRuntimeLoadContext,
+  onlyPluginIds: readonly string[] | undefined,
+) {
+  const manifest = context.manifestRegistry;
+  if (!manifest || !onlyPluginIds?.length) {
+    return manifest;
+  }
+  // A command invocation owns only these manifests. Runtime companions (such
+  // as consolidation sidecars) must not claim a conflicting CLI registration
+  // before the selected command owner gets to register.
+  return {
+    ...manifest,
+    plugins: manifest.plugins.filter((plugin) => onlyPluginIds.includes(plugin.id)),
+  };
 }
 
 function pluginCliRegistrarOwnsRoot(
@@ -246,6 +291,7 @@ async function loadPluginCliMetadataRegistryWithContext(
       ...loaderOptions,
       // The prepared record owns reuse; process caching can retain another generation's registrars.
       cache: false,
+      manifestRegistry: commandOwnerManifest(prepared.context, onlyPluginIds),
       ...(onlyPluginIds && onlyPluginIds.length > 0 ? { onlyPluginIds } : {}),
     });
     return prepared.resources
@@ -293,6 +339,7 @@ async function loadPluginCliCommandRegistryWithContext(params: {
   const options = buildPluginRuntimeLoadOptions(context, {
     ...params.loaderOptions,
     ...(onlyPluginIds && onlyPluginIds.length > 0 ? { onlyPluginIds } : {}),
+    manifestRegistry: commandOwnerManifest(context, onlyPluginIds),
     cache: false,
     channelPluginLoadIntent: "full",
     runtimeOptions: { nodes: createPluginCliGatewayNodesRuntime() },
@@ -315,8 +362,10 @@ export async function loadPluginCliDescriptors(
       params.primaryCommand,
       params.loaderOptions,
     );
+    const owners = resolvePrimaryCommandManifestPluginIds(prepared.context, params.primaryCommand);
     return collectUniqueCommandDescriptors(
       registry.cliRegistrars
+        .filter((entry) => !owners?.length || owners.includes(entry.pluginId))
         .filter((entry) => (entry.parentPath ?? []).length === 0)
         .map((entry) => entry.descriptors),
     );
@@ -336,10 +385,16 @@ export async function loadPluginCliRegistrationEntriesWithDefaults(
   const prepared = resolvePreparedPluginCliLoad(params);
   const buildEntries = (registry: PluginRegistry): PluginCliCommandGroupEntry[] => {
     const primary = mode === "metadata" && normalizeLowercaseStringOrEmpty(params.primaryCommand);
+    const owners = resolvePrimaryCommandManifestPluginIds(prepared.context, params.primaryCommand);
+    // Runtime companions may contribute other CLI roots, but cannot replace the
+    // selected manifest owner of this command.
+    const ownedRegistrars = registry.cliRegistrars.filter(
+      (entry) => !owners?.length || owners.includes(entry.pluginId),
+    );
     // Metadata discovery can include unrelated legacy roots without manifest ownership.
     const registrars = primary
-      ? registry.cliRegistrars.filter((entry) => pluginCliRegistrarOwnsRoot(entry, primary))
-      : registry.cliRegistrars;
+      ? ownedRegistrars.filter((entry) => pluginCliRegistrarOwnsRoot(entry, primary))
+      : ownedRegistrars;
     const { config, workspaceDir, logger } = prepared.context;
     return registrars.map((entry) => ({
       pluginId: entry.pluginId,
