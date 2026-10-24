@@ -734,7 +734,7 @@ describe("Claude session catalog", () => {
         remote
           ? ({
               ...nodeRuntime(nodes, invoke),
-              config: { current: () => ({}) },
+              config: { current: () => routedConfig() },
               agent: { session },
             } as unknown as PluginRuntime)
           : createPluginRuntimeMock({

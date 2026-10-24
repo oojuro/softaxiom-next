@@ -2475,22 +2475,20 @@ describe("codex command", () => {
       value: {},
     }));
     const deps = createDeps({ codexControlRequest, safeCodexControlRequest });
-    const context = (args: string) =>
-      createContext(args, undefined, {
+    const context: Partial<PluginCommandContext> = {
+      sessionKey: "agent:worker:session-1",
+      sessionTarget: {
+        agentId: "worker",
+        sessionId: "session-1",
         sessionKey: "agent:worker:session-1",
-        sessionTarget: {
-          agentId: "worker",
-          sessionId: "session-1",
-          sessionKey: "agent:worker:session-1",
-          storePath,
-        },
-        getCurrentConversationBinding,
-      });
+        storePath,
+      },
+      getCurrentConversationBinding,
+    };
 
-    await handleCodexCommand(context("threads"), { deps });
-    await handleCodexCommand(context("mcp"), { deps });
-    await handleCodexCommand(context("skills"), { deps });
-    await handleCodexCommand(context("account"), { deps });
+    for (const command of ["threads", "mcp", "skills", "account"]) {
+      await runCommand(command, deps, context);
+    }
 
     const expectedScope = expect.objectContaining({
       agentDir,
