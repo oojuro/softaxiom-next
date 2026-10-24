@@ -1,3 +1,13 @@
+# Soft Axiom fork boundary
+
+This repository is the full OpenClaw application fork used by Soft Axiom. Preserve upstream history,
+MIT licensing and updateability. Original Soft Axiom memory integration remains Apache-2.0.
+Product specifications, hosted deployment configuration, rollout and acceptance reports belong in
+private sa-cloud. Keep private credentials, customer data and operational reports out of this tree.
+Use one upstream CLI, agent runtime and device protocol; integrate our memory through plugin SDKs.
+Repository publication, installer promotion, deployment and activation require owner authorization.
+The upstream engineering guidance below applies to this fork; GitHub work targets oojuro/softaxiom.
+
 # AGENTS.md
 
 ## Choose good compromises

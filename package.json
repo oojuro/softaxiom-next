@@ -25,14 +25,16 @@
   "bugs": {
     "url": "https://github.com/openclaw/openclaw/issues"
   },
-  "license": "MIT",
+  "license": "(MIT AND Apache-2.0)",
   "author": "OpenClaw Foundation (https://openclaw.org)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/openclaw/openclaw.git"
   },
   "bin": {
-    "openclaw": "openclaw.mjs"
+    "openclaw": "openclaw.mjs",
+    "sa": "sa.mjs",
+    "softaxiom": "sa.mjs"
   },
   "publishConfig": {
     "executableFiles": [
@@ -50,6 +52,7 @@
   "files": [
     "CHANGELOG.md",
     "LICENSE",
+    "LICENSE.softaxiom",
     "cli-invocation.mjs",
     "cli-parent-lifetime.mjs",
     "cli-root-options.mjs",
@@ -64,6 +67,7 @@
     "node-compile-cache.mjs",
     "gateway-prewarm.mjs",
     "openclaw.mjs",
+    "sa.mjs",
     "worker-heap-flag.mjs",
     "pnpm-workspace.yaml",
     "README.md",
@@ -2465,5 +2469,6 @@
   "engines": {
     "node": ">=24.16.0 <25 || >=26.1.0"
   },
-  "packageManager": "pnpm@12.11.1+sha512.5b0e3288239a7ea4155d2094f547066e122a1376b3cd785a680c9112e116913e64aaaecf20dd83cc34030fa67013f5c5511f9cf430dd8384188b4c60b8a2ad1e"
+  "packageManager": "pnpm@12.11.1+sha512.5b0e3288239a7ea4155d2094f547066e122a1376b3cd785a680c9112e116913e64aaaecf20dd83cc34030fa67013f5c5511f9cf430dd8384188b4c60b8a2ad1e",
+  "private": true
 }

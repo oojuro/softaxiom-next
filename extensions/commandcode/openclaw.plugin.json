@@ -1,0 +1,97 @@
+{
+  "id": "commandcode",
+  "name": "CommandCode",
+  "categories": [
+    "models"
+  ],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providers": [
+    "commandcode",
+    "commandcode-chat",
+    "commandcode-anthropic",
+    "commandcode-claude"
+  ],
+  "providerAuthAliases": {
+    "commandcode-chat": "commandcode",
+    "commandcode-claude": "commandcode-anthropic"
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "commandcode",
+        "envVars": [
+          "COMMANDCODE_API_KEY"
+        ]
+      },
+      {
+        "id": "commandcode-anthropic",
+        "envVars": [
+          "COMMANDCODE_API_KEY"
+        ]
+      }
+    ]
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "commandcode-native",
+      "baseUrls": [
+        "https://api.commandcode.ai/provider/v1"
+      ]
+    }
+  ],
+  "providerAuthChoices": [
+    {
+      "provider": "commandcode",
+      "method": "api-key",
+      "choiceId": "commandcode-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "CommandCode API key",
+      "groupId": "commandcode",
+      "groupLabel": "CommandCode",
+      "optionKey": "commandcodeApiKey",
+      "cliFlag": "--commandcode-api-key",
+      "cliOption": "--commandcode-api-key <key>",
+      "cliDescription": "CommandCode API key"
+    },
+    {
+      "provider": "commandcode-anthropic",
+      "method": "api-key",
+      "choiceId": "commandcode-anthropic-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "CommandCode Anthropic API key",
+      "groupId": "commandcode",
+      "groupLabel": "CommandCode",
+      "optionKey": "commandcodeAnthropicApiKey",
+      "cliFlag": "--commandcode-anthropic-api-key",
+      "cliOption": "--commandcode-anthropic-api-key <key>",
+      "cliDescription": "CommandCode Anthropic API key"
+    }
+  ],
+  "modelCatalog": {
+    "discovery": {
+      "commandcode": "refreshable",
+      "commandcode-anthropic": "refreshable"
+    },
+    "providers": {
+      "commandcode": {
+        "baseUrl": "https://api.commandcode.ai/provider/v1",
+        "api": "openai-completions",
+        "models": []
+      },
+      "commandcode-anthropic": {
+        "baseUrl": "https://api.commandcode.ai/provider/v1",
+        "api": "anthropic-messages",
+        "authHeader": true,
+        "models": []
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

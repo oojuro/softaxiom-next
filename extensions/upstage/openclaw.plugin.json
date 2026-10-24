@@ -1,0 +1,68 @@
+{
+  "id": "upstage",
+  "name": "Upstage Solar",
+  "categories": [
+    "models"
+  ],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providers": [
+    "upstage",
+    "solar"
+  ],
+  "providerAuthAliases": {
+    "solar": "upstage"
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "upstage",
+        "envVars": [
+          "UPSTAGE_API_KEY"
+        ]
+      }
+    ]
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "upstage-native",
+      "baseUrls": [
+        "https://api.upstage.ai/v1"
+      ]
+    }
+  ],
+  "providerAuthChoices": [
+    {
+      "provider": "upstage",
+      "method": "api-key",
+      "choiceId": "upstage-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "Upstage Solar API key",
+      "groupId": "upstage",
+      "groupLabel": "Upstage Solar",
+      "optionKey": "upstageApiKey",
+      "cliFlag": "--upstage-api-key",
+      "cliOption": "--upstage-api-key <key>",
+      "cliDescription": "Upstage Solar API key"
+    }
+  ],
+  "modelCatalog": {
+    "discovery": {
+      "upstage": "refreshable"
+    },
+    "providers": {
+      "upstage": {
+        "baseUrl": "https://api.upstage.ai/v1",
+        "api": "openai-completions",
+        "models": []
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

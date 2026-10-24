@@ -142,6 +142,7 @@ function createResultFixture(params?: {
       terminalReplyExpectation: params?.replyOptional ? "optional" : undefined,
     },
     state,
+    runAbortController: new AbortController(),
     diagnostics: { diagnosticTrace: { traceId: "trace-1", spanId: "span-1" } },
     setup: { sessionAgentId: "main" },
     lifecycle: {
@@ -177,9 +178,9 @@ function createResultFixture(params?: {
   return { input, state, settled, prompt, hookRunner };
 }
 
-function completeResult(params?: Parameters<typeof createResultFixture>[0]) {
+async function completeResult(params?: Parameters<typeof createResultFixture>[0]) {
   const { input, settled, prompt } = createResultFixture(params);
-  return completeEmbeddedAttemptResult(input as never, settled, prompt);
+  return await completeEmbeddedAttemptResult(input as never, settled, prompt);
 }
 
 function settledToolMessages(): EmbeddedRunAttemptResult["messagesSnapshot"] {
@@ -211,7 +212,7 @@ describe("attempt result projection", () => {
       signedIndex: 1,
       text: "Signed answer.",
     },
-  ])("preserves native answer boundaries for $parts", ({ parts, text, signedIndex }) => {
+  ])("preserves native answer boundaries for $parts", async ({ parts, text, signedIndex }) => {
     const assistant = makeAssistantMessageFixture({
       stopReason: "stop",
       content: parts.map((part, index) => ({
@@ -222,7 +223,7 @@ describe("attempt result projection", () => {
           : {}),
       })),
     });
-    const result = completeResult({
+    const result = await completeResult({
       currentAttemptCompletedAssistant: assistant,
       assistantTexts: parts,
       hasSuccessfulModelResponse: true,
@@ -244,16 +245,21 @@ describe("attempt result projection", () => {
     { name: "Write", allowedToolNames: ["write"], expected: true },
     { name: "functions.write", allowedToolNames: ["write"], expected: true },
     { name: "WRITE", allowedToolNames: ["Write", "wriTE"], expected: undefined },
-  ])("uses native callable-name matching for $name", ({ name, allowedToolNames, expected }) => {
-    const assistant = makeAssistantMessageFixture({
-      stopReason: "stop",
-      content: [{ type: "text", text: JSON.stringify({ name, arguments: { path: "proof.txt" } }) }],
-    });
-    expect(
-      completeResult({ currentAttemptCompletedAssistant: assistant, allowedToolNames })
-        .textToolCallAttempt,
-    ).toBe(expected);
-  });
+  ])(
+    "uses native callable-name matching for $name",
+    async ({ name, allowedToolNames, expected }) => {
+      const assistant = makeAssistantMessageFixture({
+        stopReason: "stop",
+        content: [
+          { type: "text", text: JSON.stringify({ name, arguments: { path: "proof.txt" } }) },
+        ],
+      });
+      expect(
+        (await completeResult({ currentAttemptCompletedAssistant: assistant, allowedToolNames }))
+          .textToolCallAttempt,
+      ).toBe(expected);
+    },
+  );
 
   it.each(
     [false, true].flatMap((nativeCall) =>
@@ -266,7 +272,7 @@ describe("attempt result projection", () => {
     ),
   )(
     "recognizes text-only terminal calls after a read (native=$nativeCall): $text",
-    ({ nativeCall, text }) => {
+    async ({ nativeCall, text }) => {
       const assistant = makeAssistantMessageFixture({
         stopReason: "stop",
         content: [{ type: "text", text }],
@@ -274,7 +280,7 @@ describe("attempt result projection", () => {
       if (nativeCall) {
         assistant.content.push({ type: "toolCall", id: "native", name: "write", arguments: {} });
       }
-      const result = completeResult({
+      const result = await completeResult({
         currentAttemptCompletedAssistant: assistant,
         allowedToolNames: ["write"],
         toolMetas: [{ toolName: "read", replaySafe: true, isError: false }],
@@ -283,7 +289,90 @@ describe("attempt result projection", () => {
     },
   );
 
-  it("keeps the settled result snapshot when an output hook replaces live state", () => {
+  it("settles asynchronous output capture before the attempt owner can release its audience", async () => {
+    const fixture = createResultFixture({ assistantTexts: ["Journal this completed answer."] });
+    const capture = createDeferred();
+    vi.spyOn(fixture.hookRunner, "hasHooks").mockReturnValue(true);
+    const output = vi.spyOn(fixture.hookRunner, "runLlmOutput").mockReturnValue(capture.promise);
+    let completed = false;
+    const result = completeEmbeddedAttemptResult(
+      fixture.input as never,
+      fixture.settled,
+      fixture.prompt,
+    ).then((value) => {
+      completed = true;
+      return value;
+    });
+    await Promise.resolve();
+    expect(output).toHaveBeenCalledOnce();
+    expect(completed).toBe(false);
+    capture.resolve();
+    expect((await result).terminal).toEqual({ kind: "ok" });
+  });
+
+  it("does not strand cancellation behind a pending output hook", async () => {
+    const fixture = createResultFixture();
+    const capture = createDeferred();
+    vi.spyOn(fixture.hookRunner, "hasHooks").mockReturnValue(true);
+    vi.spyOn(fixture.hookRunner, "runLlmOutput").mockReturnValue(capture.promise);
+    const result = completeEmbeddedAttemptResult(
+      fixture.input as never,
+      fixture.settled,
+      fixture.prompt,
+    );
+    await Promise.resolve();
+    fixture.input.runAbortController.abort();
+    expect((await result).terminal).toEqual({ kind: "ok" });
+    capture.resolve();
+  });
+
+  it("preserves the terminal answer when an output hook fails", async () => {
+    const fixture = createResultFixture({ assistantTexts: ["Completed answer."] });
+    vi.spyOn(fixture.hookRunner, "hasHooks").mockReturnValue(true);
+    vi.spyOn(fixture.hookRunner, "runLlmOutput").mockRejectedValue(new Error("capture failed"));
+    const result = await completeEmbeddedAttemptResult(
+      fixture.input as never,
+      fixture.settled,
+      fixture.prompt,
+    );
+    expect(result.terminal).toEqual({ kind: "ok" });
+  });
+
+  it("does not start output capture after the run was already aborted", async () => {
+    const fixture = createResultFixture();
+    fixture.input.runAbortController.abort();
+    vi.spyOn(fixture.hookRunner, "hasHooks").mockReturnValue(true);
+    const output = vi.spyOn(fixture.hookRunner, "runLlmOutput");
+    const result = await completeEmbeddedAttemptResult(
+      fixture.input as never,
+      fixture.settled,
+      fixture.prompt,
+    );
+    expect(result.terminal).toEqual({ kind: "ok" });
+    expect(output).not.toHaveBeenCalled();
+  });
+
+  it("bounds output-hook settlement when a handler does not complete", async () => {
+    vi.useFakeTimers();
+    const capture = createDeferred();
+    try {
+      const fixture = createResultFixture();
+      vi.spyOn(fixture.hookRunner, "hasHooks").mockReturnValue(true);
+      vi.spyOn(fixture.hookRunner, "runLlmOutput").mockReturnValue(capture.promise);
+      const result = completeEmbeddedAttemptResult(
+        fixture.input as never,
+        fixture.settled,
+        fixture.prompt,
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect((await result).terminal).toEqual({ kind: "ok" });
+    } finally {
+      capture.resolve();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the settled result snapshot when an output hook replaces live state", async () => {
     const assistant = makeAssistantMessageFixture({ content: [{ type: "text", text: "settled" }] });
     const fixture = createResultFixture({
       currentAttemptCompletedAssistant: assistant,
@@ -311,7 +400,7 @@ describe("attempt result projection", () => {
       });
     });
 
-    const result = completeEmbeddedAttemptResult(
+    const result = await completeEmbeddedAttemptResult(
       fixture.input as never,
       fixture.settled,
       fixture.prompt,
@@ -334,8 +423,8 @@ describe("attempt result projection", () => {
     expect(result).not.toHaveProperty("beforeAgentFinalizeRevisionReason");
   });
 
-  it("keeps current tool replay evidence separate from cumulative replay state", () => {
-    const result = completeResult({ toolMetas: [{ toolName: "cron", replaySafe: false }] });
+  it("keeps current tool replay evidence separate from cumulative replay state", async () => {
+    const result = await completeResult({ toolMetas: [{ toolName: "cron", replaySafe: false }] });
 
     expect(result.replayMetadata).toEqual({ hadPotentialSideEffects: false, replaySafe: true });
     expect(result.currentAttemptReplayMetadata).toEqual({
@@ -379,9 +468,9 @@ describe("attempt result projection", () => {
     },
   ])(
     "records $label after transcript projection",
-    ({ assistant, didSendViaMessagingTool, expectedStatus, terminalError }) => {
+    async ({ assistant, didSendViaMessagingTool, expectedStatus, terminalError }) => {
       const recordEvent = vi.fn<EmbeddedRunAttemptTrajectoryRecorder["recordEvent"]>();
-      const result = completeResult({
+      const result = await completeResult({
         currentAttemptCompletedAssistant: assistant,
         replyOptional: !didSendViaMessagingTool,
         didSendViaMessagingTool,
@@ -486,8 +575,8 @@ describe("attempt result projection", () => {
       },
       false,
     ]),
-  ])("limits settled-turn recovery after %s", (_name, params, expected) => {
-    const result = completeResult({ messagesSnapshot: settledToolMessages(), ...params });
+  ])("limits settled-turn recovery after %s", async (_name, params, expected) => {
+    const result = await completeResult({ messagesSnapshot: settledToolMessages(), ...params });
     if (expected) {
       expect(Boolean(result.settledTurnFinalizationContext)).toBe(true);
     } else {
@@ -495,8 +584,8 @@ describe("attempt result projection", () => {
     }
   });
 
-  it("defaults missing replay metadata to replay-unsafe", () => {
-    const attempt = completeResult();
+  it("defaults missing replay metadata to replay-unsafe", async () => {
+    const attempt = await completeResult();
     delete (attempt as Partial<typeof attempt>).replayMetadata;
 
     expect(normalizeEmbeddedRunAttemptResult(attempt as never).replayMetadata).toEqual({
@@ -507,7 +596,7 @@ describe("attempt result projection", () => {
 
   it.each([{ label: "quiet", notify: false, expectedText: HEARTBEAT_TOKEN }])(
     "carries a $label heartbeat response and private scratch across empty retry attempts",
-    ({ notify, expectedText }) => {
+    async ({ notify, expectedText }) => {
       const carryover = createAttemptCarryover();
       const publicResponse = {
         outcome: "done" as const,
@@ -521,12 +610,12 @@ describe("attempt result projection", () => {
         source: "prompt" as const,
         error: Object.assign(new Error("529 overloaded"), { status: 529 }),
       };
-      const accepted = completeResult({
+      const accepted = await completeResult({
         heartbeatToolResponse: { ...publicResponse, scratch },
         terminal: providerFailure,
       });
-      const retry = completeResult({ terminal: providerFailure });
-      const completed = completeResult({ assistantTexts: ["Internal retry fallback."] });
+      const retry = await completeResult({ terminal: providerFailure });
+      const completed = await completeResult({ assistantTexts: ["Internal retry fallback."] });
 
       carryover.apply(accepted);
       carryover.apply(retry);
@@ -550,10 +639,10 @@ describe("attempt result projection", () => {
     },
   );
 
-  it("starts a fresh run without the previous heartbeat response or scratch", () => {
+  it("starts a fresh run without the previous heartbeat response or scratch", async () => {
     const previousRun = createAttemptCarryover();
     previousRun.apply(
-      completeResult({
+      await completeResult({
         heartbeatToolResponse: {
           outcome: "done",
           notify: true,
@@ -563,7 +652,7 @@ describe("attempt result projection", () => {
       }),
     );
     const freshRun = createAttemptCarryover();
-    const completed = completeResult({ assistantTexts: ["The new task is still running."] });
+    const completed = await completeResult({ assistantTexts: ["The new task is still running."] });
 
     freshRun.apply(completed);
     const payloads = buildPayloads({
@@ -581,34 +670,36 @@ describe("attempt result projection", () => {
     ).toBeUndefined();
   });
 
-  it("keeps completed client tool calls in reserved source order", () => {
+  it("keeps completed client tool calls in reserved source order", async () => {
     expect(
-      completeResult({
-        clientToolCallSlots: [
-          { toolCallId: "first", name: "search", params: { query: "one" }, completed: true },
-          { toolCallId: "second", name: "search", completed: false },
-          { toolCallId: "third", name: "fetch", params: { id: 3 }, completed: true },
-        ],
-      }).clientToolCalls,
+      (
+        await completeResult({
+          clientToolCallSlots: [
+            { toolCallId: "first", name: "search", params: { query: "one" }, completed: true },
+            { toolCallId: "second", name: "search", completed: false },
+            { toolCallId: "third", name: "fetch", params: { id: 3 }, completed: true },
+          ],
+        })
+      ).clientToolCalls,
     ).toEqual([
       { name: "search", params: { query: "one" } },
       { name: "fetch", params: { id: 3 } },
     ]);
   });
 
-  it("projects pending media and voice fields", () => {
-    expect(completeResult().toolMediaUrls).toBeUndefined();
-    expect(completeResult({ pendingToolMediaReply: { mediaUrls: [" "] } }).toolMediaUrls).toEqual([
-      " ",
-    ]);
+  it("projects pending media and voice fields", async () => {
+    expect((await completeResult()).toolMediaUrls).toBeUndefined();
     expect(
-      completeResult({ pendingToolMediaReply: { mediaUrls: ["file:///tmp/result.png"] } })
+      (await completeResult({ pendingToolMediaReply: { mediaUrls: [" "] } })).toolMediaUrls,
+    ).toEqual([" "]);
+    expect(
+      (await completeResult({ pendingToolMediaReply: { mediaUrls: ["file:///tmp/result.png"] } }))
         .toolMediaUrls,
     ).toEqual(["file:///tmp/result.png"]);
-    expect(completeResult({ pendingToolMediaReply: { audioAsVoice: true } }).toolAudioAsVoice).toBe(
-      true,
-    );
-    const autoDeliveryResult = completeResult({
+    expect(
+      (await completeResult({ pendingToolMediaReply: { audioAsVoice: true } })).toolAudioAsVoice,
+    ).toBe(true);
+    const autoDeliveryResult = await completeResult({
       pendingToolMediaReply: { mediaUrls: ["/tmp/reply.opus"] },
       toolAutoDeliveryMediaUrls: ["/tmp/reply.opus"],
     });
@@ -619,7 +710,7 @@ describe("attempt result projection", () => {
         TEST_OPERATIONAL_RUN_INSTANCE,
       ),
     ).toEqual(["/tmp/reply.opus"]);
-    const alreadySentResult = completeResult({
+    const alreadySentResult = await completeResult({
       pendingToolMediaReply: { mediaUrls: ["/tmp/reply.opus"] },
       toolAutoDeliveryMediaUrls: ["/tmp/reply.opus"],
       messagingToolSentMediaUrls: ["/tmp/reply.opus"],
@@ -780,7 +871,7 @@ describe("trailing source progress at runtime settlement", () => {
     fixture.settled.currentAttemptCompletedAssistant = terminalAssistant as never;
     fixture.settled.messagesSnapshot = messages;
     fixture.prompt.messagesSnapshot = messages;
-    const result = completeEmbeddedAttemptResult(
+    const result = await completeEmbeddedAttemptResult(
       fixture.input as never,
       fixture.settled,
       fixture.prompt,

@@ -42,12 +42,12 @@ describe("applyExclusiveSlotSelection", () => {
 
   it("keeps the default memory selection implicit", () => {
     const config: OpenClawConfig = {
-      plugins: { entries: { "memory-core": { enabled: true } } },
+      plugins: { entries: { "softaxiom-memory": { enabled: true } } },
     };
 
     const result = applyExclusiveSlotSelection({
       config,
-      selectedId: "memory-core",
+      selectedId: "softaxiom-memory",
       selectedKind: "memory",
     });
 
@@ -58,13 +58,13 @@ describe("applyExclusiveSlotSelection", () => {
     const config: OpenClawConfig = {
       plugins: {
         slots: { memory: "memory" },
-        entries: { memory: { enabled: true }, "memory-core": { enabled: true } },
+        entries: { memory: { enabled: true }, "softaxiom-memory": { enabled: true } },
       },
     };
 
     const result = applyExclusiveSlotSelection({
       config,
-      selectedId: "memory-core",
+      selectedId: "softaxiom-memory",
       selectedKind: "memory",
     });
 

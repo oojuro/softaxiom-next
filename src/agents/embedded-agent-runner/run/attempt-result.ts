@@ -25,6 +25,7 @@ import type { AgentRuntimeModelAttempt } from "../../runtime-plan/types.js";
 import { markCoreTtsAttemptResult } from "../../tools/tts-tool-result-provenance.js";
 import { log } from "../logger.js";
 import { observeReplayMetadata, replayMetadataFromState } from "../replay-state.js";
+import { joinWithRunLivenessDeadline } from "./abortable.js";
 import { buildEmbeddedAgentHookContext } from "./agent-hook-context.js";
 import type { EmbeddedAttemptExecutionPhaseInput } from "./attempt-execution-types.js";
 import { finalizeEmbeddedAttempt } from "./attempt-finalize.js";
@@ -175,7 +176,7 @@ function prepareTerminalAssistantReply(
   return reply;
 }
 
-export function completeEmbeddedAttemptResult(
+export async function completeEmbeddedAttemptResult(
   input: EmbeddedAttemptExecutionPhaseInput & { preparedStreamRuntime: PreparedStreamRuntime },
   settled: Awaited<ReturnType<typeof settleEmbeddedAttemptStream>>,
   prompt: EmbeddedAttemptPromptState &
@@ -183,7 +184,7 @@ export function completeEmbeddedAttemptResult(
       EmbeddedRunAttemptResult,
       "messagesSnapshot" | "sessionIdUsed" | "sessionFileUsed" | "beforeAgentFinalizeRevisionReason"
     >,
-): EmbeddedRunAttemptWithReceiptEvidence {
+): Promise<EmbeddedRunAttemptWithReceiptEvidence> {
   const { attempt } = input;
   const { sessionRuntime, bootstrap, systemPrompt } = input.prepared;
   const {
@@ -239,36 +240,43 @@ export function completeEmbeddedAttemptResult(
         ? { contextWindowReferenceTokens: attempt.contextWindowInfo.referenceTokens }
         : {}),
     };
-    hookRunner
-      .runLlmOutput(
-        {
-          runId: attempt.runId,
-          sessionId: attempt.sessionId,
-          provider: attempt.provider,
-          model: attempt.modelId,
-          ...contextWindow,
-          resolvedRef:
-            attempt.runtimePlan?.observability.resolvedRef ??
-            `${attempt.provider}/${attempt.modelId}`,
-          ...(attempt.runtimePlan?.observability.harnessId
-            ? { harnessId: attempt.runtimePlan.observability.harnessId }
-            : {}),
-          assistantTexts,
-          lastAssistant: state.lastAssistant,
-          usage: state.attemptUsage,
-        },
-        {
-          ...buildEmbeddedAgentHookContext(
-            attempt,
-            hookAgentId,
-            freezeDiagnosticTraceContext(state.diagnosticTrace),
-          ),
-          ...contextWindow,
-        },
-      )
-      .catch((err: unknown) => {
-        log.warn(`llm_output hook failed: ${String(err)}`);
-      });
+    // Output hooks may write through this attempt's memory audience. Settle their
+    // bounded work before the dispatch owner releases it, without delaying abort.
+    await joinWithRunLivenessDeadline({
+      runAbortSignal: input.runAbortController.signal,
+      onTimeout: () => log.warn("llm_output hook settlement timed out"),
+      joinWork: () =>
+        hookRunner
+          .runLlmOutput(
+            {
+              runId: attempt.runId,
+              sessionId: attempt.sessionId,
+              provider: attempt.provider,
+              model: attempt.modelId,
+              ...contextWindow,
+              resolvedRef:
+                attempt.runtimePlan?.observability.resolvedRef ??
+                `${attempt.provider}/${attempt.modelId}`,
+              ...(attempt.runtimePlan?.observability.harnessId
+                ? { harnessId: attempt.runtimePlan.observability.harnessId }
+                : {}),
+              assistantTexts,
+              lastAssistant: state.lastAssistant,
+              usage: state.attemptUsage,
+            },
+            {
+              ...buildEmbeddedAgentHookContext(
+                attempt,
+                hookAgentId,
+                freezeDiagnosticTraceContext(state.diagnosticTrace),
+              ),
+              ...contextWindow,
+            },
+          )
+          .catch((err: unknown) => {
+            log.warn(`llm_output hook failed: ${String(err)}`);
+          }),
+    });
   }
 
   const { messagingToolSentMediaUrls } = evidence;

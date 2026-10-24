@@ -1,0 +1,77 @@
+{
+  "id": "nebius-token-factory",
+  "name": "Nebius Token Factory",
+  "categories": [
+    "models"
+  ],
+  "activation": {
+    "onStartup": false
+  },
+  "enabledByDefault": true,
+  "providers": [
+    "nebius-token-factory",
+    "nebius",
+    "nebius-tokenfactory",
+    "nebius-tf",
+    "token-factory",
+    "tokenfactory"
+  ],
+  "providerAuthAliases": {
+    "nebius": "nebius-token-factory",
+    "nebius-tokenfactory": "nebius-token-factory",
+    "nebius-tf": "nebius-token-factory",
+    "token-factory": "nebius-token-factory",
+    "tokenfactory": "nebius-token-factory"
+  },
+  "setup": {
+    "providers": [
+      {
+        "id": "nebius-token-factory",
+        "envVars": [
+          "NEBIUS_API_KEY",
+          "NEBIUS_TOKEN_FACTORY_API_KEY"
+        ]
+      }
+    ]
+  },
+  "providerEndpoints": [
+    {
+      "endpointClass": "nebius-token-factory-native",
+      "baseUrls": [
+        "https://api.tokenfactory.nebius.com/v1"
+      ]
+    }
+  ],
+  "providerAuthChoices": [
+    {
+      "provider": "nebius-token-factory",
+      "method": "api-key",
+      "choiceId": "nebius-token-factory-api-key",
+      "appGuidedSecret": true,
+      "choiceLabel": "Nebius Token Factory API key",
+      "groupId": "nebius-token-factory",
+      "groupLabel": "Nebius Token Factory",
+      "optionKey": "nebiusApiKey",
+      "cliFlag": "--nebius-token-factory-api-key",
+      "cliOption": "--nebius-token-factory-api-key <key>",
+      "cliDescription": "Nebius Token Factory API key"
+    }
+  ],
+  "modelCatalog": {
+    "discovery": {
+      "nebius-token-factory": "refreshable"
+    },
+    "providers": {
+      "nebius-token-factory": {
+        "baseUrl": "https://api.tokenfactory.nebius.com/v1",
+        "api": "openai-completions",
+        "models": []
+      }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
