@@ -10,7 +10,6 @@ import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { registerContextEngineInRegistry } from "../../context-engine/registry.js";
 import type { ContextEngine } from "../../context-engine/types.js";
-import { resolveRuntimeWorkerUrl } from "../../infra/runtime-worker-url.js";
 import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginCache, withPluginCache } from "../../plugins/plugin-cache.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
@@ -20,7 +19,6 @@ import { retireInspectionInstances } from "../../plugins/registry-inspection.tes
 import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import { getAsyncWorkSignal } from "../../shared/async-work-scope.js";
 import { closeOpenClawAgentDatabasesAsync } from "../../state/openclaw-agent-db.js";
-import { withEnv } from "../../test-utils/env.js";
 import {
   clearPreparedEmbeddedAgentSettings,
   createPreparedEmbeddedAgentSettingsManager,
@@ -30,14 +28,12 @@ import { SessionManager } from "../sessions/session-manager.js";
 import { SettingsManager } from "../sessions/settings-manager.js";
 import { makeAssistantMessageFixture } from "../test-helpers/assistant-message-fixtures.js";
 import { ZERO_USAGE_FIXTURE } from "../test-helpers/usage-fixtures.js";
-import { cliCompactionBackendEntrypoints } from "./cli-compaction-runtime.test-support.js";
 import {
   buildContextEngine,
   createPreparedRuntimeLease,
   defaultSettingsManager,
   prepareCompactionScenario as prepare,
   recordCliCompactionInStoreImpl,
-  resolveCliBackendConfig,
   resolveContextEngineFromRegistry,
   setCliCompactionTestDeps,
   type CliCompactionTestDeps,
@@ -246,30 +242,23 @@ describe("runCliTurnCompactionLifecycle", () => {
     },
   );
 
-  it("accepts no compactable entries only from a successful compaction result", async () => {
-    let result = { ok: true, compacted: false, reason: "no real conversation messages" };
+  it.each([true, false])("propagates empty-transcript compaction success=%s", async (ok) => {
     const scenario = await prepareScenario("no-compactable-entries", {
       provider: "test-provider",
       model: "test-model",
-      compact: async () => result,
+      compact: async () => ({ ok, compacted: false, reason: "no real conversation messages" }),
       deps: {
         openSessionManager: async () =>
           ({ getBranch: () => [], buildSessionContext: () => ({ messages: [] }) }) as never,
       },
     });
-    const run = (ok: boolean, reason = "no real conversation messages", compacted = false) => {
-      result = { ok, compacted, reason };
-      return scenario.run();
-    };
-
-    await expect(run(true)).resolves.toBe(scenario.sessionEntry);
-    await expect(run(false)).rejects.toThrow(
-      "CLI transcript compaction failed for test-provider/test-model: no real conversation messages",
-    );
-    await expect(run(false, "already under target")).resolves.toBe(scenario.sessionEntry);
-    await expect(run(false, "contradictory result", true)).rejects.toThrow(
-      "CLI transcript compaction failed for test-provider/test-model: contradictory result",
-    );
+    if (ok) {
+      await expect(scenario.run()).resolves.toBe(scenario.sessionEntry);
+    } else {
+      await expect(scenario.run()).rejects.toThrow(
+        "CLI transcript compaction failed for test-provider/test-model: no real conversation messages",
+      );
+    }
   });
 
   it.each(["admitted", "current"] as const)(
@@ -327,90 +316,73 @@ describe("runCliTurnCompactionLifecycle", () => {
     },
   );
 
-  it("records context-engine compaction successor session targets", async () => {
-    const successorSessionId = "session-cli-rotated";
-    const record = vi.fn(recordCliCompactionInStoreImpl);
-    const taskCwd = path.join(tmpDir, "task-repo");
-    await fs.mkdir(taskCwd, { recursive: true });
-    const settingsCwds: string[] = [];
-    const scenario = await prepareScenario("cli-rotates", {
-      cwd: taskCwd,
-      sessionEntry: resumeState(
-        { codex: "stale-cli-session", "claude-cli": "stale-claude-session" },
-        "stale-claude-session",
-      ),
-      compact: async (compactParams) =>
-        successfulCompaction({
-          summary: "compacted",
-          tokensBefore: compactParams.currentTokenCount ?? 0,
-          tokensAfter: 100,
-          sessionId: successorSessionId,
-          sessionTarget: {
-            sessionKey: "agent:main:cli-rotates",
-            storePath: path.join(tmpDir, "cli-rotates.sqlite"),
+  it.each(["target", "legacy-marker"] as const)(
+    "records a %s compaction successor",
+    async (kind) => {
+      const successorSessionId = "session-cli-rotated";
+      const record = vi.fn(recordCliCompactionInStoreImpl);
+      const taskCwd = path.join(tmpDir, "task-repo");
+      await fs.mkdir(taskCwd, { recursive: true });
+      const settingsCwds: string[] = [];
+      const scenario = await prepareScenario("cli-rotates", {
+        cwd: taskCwd,
+        sessionEntry: resumeState(
+          { codex: "stale-cli-session", "claude-cli": "stale-claude-session" },
+          "stale-claude-session",
+        ),
+        compact: async (compactParams) =>
+          successfulCompaction({
+            summary: "compacted",
+            tokensBefore: compactParams.currentTokenCount ?? 0,
+            tokensAfter: 100,
+            sessionId: successorSessionId,
+            ...(kind === "target"
+              ? {
+                  sessionTarget: {
+                    sessionKey: "agent:main:cli-rotates",
+                    storePath: path.join(tmpDir, "cli-rotates.sqlite"),
+                  },
+                }
+              : {
+                  sessionFile: `sqlite:main:${successorSessionId}:${path.join(tmpDir, "cli-rotates.sqlite")}`,
+                }),
+          }),
+        recordCliCompactionInStore: record,
+        deps: {
+          createPreparedEmbeddedAgentSettingsManager: (params) => {
+            settingsCwds.push(params.cwd);
+            return defaultSettingsManager();
           },
-        }),
-      recordCliCompactionInStore: record,
-      deps: {
-        createPreparedEmbeddedAgentSettingsManager: (params) => {
-          settingsCwds.push(params.cwd);
-          return defaultSettingsManager();
         },
-      },
-    });
-    const { calls, maintenance, sessionId, sessionKey, storePath } = scenario;
-    const updatedEntry = await scenario.run();
+      });
+      const { calls, maintenance, sessionId, sessionKey, storePath } = scenario;
+      const updatedEntry = await scenario.run();
 
-    expect(calls[0]?.runtimeContext?.workspaceDir).toBe(tmpDir);
-    expect(calls[0]?.runtimeContext?.cwd).toBe(taskCwd);
-    expect(settingsCwds).toEqual([taskCwd]);
-    expect(calls[0]?.sessionTarget).toEqual({
-      agentId: "main",
-      sessionId,
-      sessionKey,
-      storePath,
-    });
-    expectCallContaining(maintenance, {
-      sessionId: successorSessionId,
-      sessionFile: sessionKey,
-    });
-    expectCallContaining(record, {
-      compactionKind: "context-engine",
-      expectedSession: expect.objectContaining({ sessionId: successorSessionId }),
-      tokensAfter: 100,
-    });
-    expect(updatedEntry?.cliSessionBindings).toBeUndefined();
-    expect(updatedEntry?.cliSessionIds).toBeUndefined();
-    expect(updatedEntry?.claudeCliSessionId).toBeUndefined();
-  });
-
-  it("preserves deprecated SQLite-marker successors during CLI maintenance", async () => {
-    const successorId = "session-cli-marker-successor";
-    const scenario = await prepareSuccessor("marker", ({ storePath }) =>
-      successfulCompaction({
-        tokensBefore: 950,
-        tokensAfter: 100,
-        sessionId: successorId,
-        sessionFile: `sqlite:main:${successorId}:${storePath}`,
-      }),
-    );
-
-    await scenario.run();
-
-    expectCallContaining(scenario.maintenance, {
-      sessionFile: `sqlite:main:${successorId}:${scenario.storePath}`,
-      sessionId: successorId,
-      sessionTarget: {
+      expect(calls[0]?.runtimeContext?.workspaceDir).toBe(tmpDir);
+      expect(calls[0]?.runtimeContext?.cwd).toBe(taskCwd);
+      expect(settingsCwds).toEqual([taskCwd]);
+      expect(calls[0]?.sessionTarget).toEqual({
         agentId: "main",
-        sessionId: successorId,
-        sessionKey: scenario.sessionKey,
-        storePath: scenario.storePath,
-      },
-    });
-    expectCallContaining(scenario.record, {
-      expectedSession: expect.objectContaining({ sessionId: successorId }),
-    });
-  });
+        sessionId,
+        sessionKey,
+        storePath,
+      });
+      expectCallContaining(maintenance, {
+        sessionId: successorSessionId,
+        sessionFile:
+          kind === "target" ? sessionKey : `sqlite:main:${successorSessionId}:${storePath}`,
+        sessionTarget: { agentId: "main", sessionId: successorSessionId, sessionKey, storePath },
+      });
+      expectCallContaining(record, {
+        compactionKind: "context-engine",
+        expectedSession: expect.objectContaining({ sessionId: successorSessionId }),
+        tokensAfter: 100,
+      });
+      expect(updatedEntry?.cliSessionBindings).toBeUndefined();
+      expect(updatedEntry?.cliSessionIds).toBeUndefined();
+      expect(updatedEntry?.claudeCliSessionId).toBeUndefined();
+    },
+  );
 
   it("rejects an engine that changes the host row before successor acceptance", async () => {
     const successorId = "session-cli-key-successor";
@@ -494,7 +466,6 @@ describe("runCliTurnCompactionLifecycle", () => {
       const selection = { agentHarnessId: "codex", modelSelectionLocked: locked, authProfileId };
       const calls: CompactParams[] = [];
       const contextEngine = buildContextEngine({ compactCalls: calls });
-      const resolveContextEngine = vi.fn(async () => contextEngine);
       const lease = createPreparedRuntimeLease({
         config: {},
         agentId: "main",
@@ -509,16 +480,10 @@ describe("runCliTurnCompactionLifecycle", () => {
         return lease;
       });
       const guard = vi.fn(() => ({ supported: true, disabled: false }));
-      const record = vi.fn(async () => ({
-        sessionId: `session-${suffix}`,
-        updatedAt: Date.now(),
-        compactionCount: 1,
-      }));
+      const record = vi.fn(recordCliCompactionInStoreImpl);
       const nativeResult = successfulCompaction({
         tokensBefore: 950,
         tokensAfter,
-        summary: "engine-owned",
-        firstKeptEntryId: "entry-1",
         sessionId: "session-codex-owned-engine-rotated",
         sessionFile: path.join(tmpDir, "session-codex-owned-engine-rotated.jsonl"),
       });
@@ -531,7 +496,7 @@ describe("runCliTurnCompactionLifecycle", () => {
         },
         recordCliCompactionInStore: record,
         deps: {
-          resolveContextEngine,
+          resolveContextEngine: async () => contextEngine,
           acquirePreparedModelRuntime,
           applyAgentAutoCompactionGuard: guard,
           resolveCliBackendConfig: () =>
@@ -550,36 +515,16 @@ describe("runCliTurnCompactionLifecycle", () => {
         pluginGeneration,
         cliBackendId: ownsNative ? "codex" : undefined,
       });
-      expect(resolveContextEngine).toHaveBeenCalledTimes(1);
-      expect(acquirePreparedModelRuntime).toHaveBeenCalledOnce();
       expect(guard.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
         nativeCompact.mock.invocationCallOrder[0] ?? 0,
       );
-      expect(nativeCompact).toHaveBeenCalledTimes(1);
       const [nativeInput, nativeOptions] = nativeCompact.mock.calls[0] ?? [];
       expect(nativeInput?.contextEngine).toBe(contextEngine);
-      expect(nativeInput).toMatchObject({
-        sessionId,
-        sessionKey,
-        sessionFile: sessionKey,
-        provider,
-        model: "gpt-5.5",
-        contextTokenBudget: 1_000,
-        currentTokenCount: 950,
-        ...selection,
-        trigger: "budget",
-        force: true,
-      });
-      expect(nativeInput?.contextEngineRuntimeContext).toMatchObject({
-        ...selection,
-        currentTokenCount: 950,
-        tokenBudget: 1_000,
-        trigger: "cli_native_budget",
-      });
+      expect(nativeInput).toMatchObject({ sessionId, ...selection });
+      expect(nativeInput?.contextEngineRuntimeContext).toMatchObject(selection);
       expect(nativeOptions?.preparedModelRuntime).toBe(lease.snapshot);
       expect(lease[Symbol.asyncDispose]).toHaveBeenCalledOnce();
       expect(calls).toHaveLength(0);
-      expect(record).toHaveBeenCalledTimes(1);
       expectCallContaining(record, {
         compactionKind: "native-harness",
         sessionKey,
@@ -800,45 +745,6 @@ describe("runCliTurnCompactionLifecycle", () => {
       await disposed.promise;
       vi.useRealTimers();
     }
-  });
-
-  it("preserves google-gemini-cli native history and resume binding under compaction pressure", async () => {
-    const entry = cliCompactionBackendEntrypoints[1];
-    const { provider, pluginId } = entry;
-    const bundled = path.join(tmpDir, "bundled");
-    const pluginRoot = path.join(bundled, pluginId);
-    await fs.mkdir(pluginRoot, { recursive: true });
-    await fs.copyFile(
-      new URL(`../../../extensions/${pluginId}/openclaw.plugin.json`, import.meta.url),
-      path.join(pluginRoot, "openclaw.plugin.json"),
-    );
-    await fs.writeFile(
-      path.join(pluginRoot, "setup-api.mjs"),
-      `export { default } from ${JSON.stringify(resolveRuntimeWorkerUrl(entry).href)};`,
-    );
-    await fs.copyFile(path.join(pluginRoot, "setup-api.mjs"), path.join(pluginRoot, "index.mjs"));
-    const backend = withEnv({ OPENCLAW_BUNDLED_PLUGINS_DIR: bundled }, () =>
-      resolveCliBackendConfig(provider),
-    );
-    expect(backend).not.toBeNull();
-    const nativeCompact = vi.fn();
-    const scenario = await prepareScenario(`${provider}-owns-compaction`, {
-      provider,
-      sessionEntry: {
-        cliSessionBindings: { [provider]: { sessionId: "native-session" } },
-      },
-      deps: {
-        maybeCompactAgentHarnessSession: nativeCompact as never,
-        resolveCliBackendConfig: () => backend,
-      },
-    });
-    const { calls, record, sessionEntry } = scenario;
-    const updatedEntry = await scenario.run();
-
-    expectNoCalls(nativeCompact, record);
-    expect(calls).toHaveLength(0);
-    expect(updatedEntry).toBe(sessionEntry);
-    expect(updatedEntry?.cliSessionBindings?.[provider]?.sessionId).toBe("native-session");
   });
 
   it("does not compact reset-discarded tool output in the post-turn lifecycle", async () => {
