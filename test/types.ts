@@ -5,7 +5,8 @@ import { Memory } from "../lib/store.js";
 import { LocalAgent } from "../lib/runtime.js";
 import { githubAdapter } from "../lib/adapters.js";
 import type { PreparedAction } from "../lib/browser.js";
-import type { Handler } from "../lib/core/agent/tools/runtime.js";
+import type { Handler } from "../lib/core/agent/tools/executor.js";
+import { createAssistantMessageEventStream } from "../lib/core/agent/provider.js";
 
 const transactionalReply: Handler<{ token: string }> = async (_input, context) => {
   await context.say("web", "synthetic", undefined, { token: "opaque-host-commit" });
@@ -28,8 +29,11 @@ const invalid: number = memory.call("settings").timezone;
 void invalid;
 // @ts-expect-error adapter transport must be explicit and supported
 githubAdapter.configure("hosted-browser");
-// @ts-expect-error custom models return a structured message
-new LocalAgent("/synthetic/workspace", { complete: async () => 42 });
+// @ts-expect-error custom transports must return an OpenClaw message event stream
+new LocalAgent("/synthetic/workspace", { stream: async () => 42 });
+new LocalAgent("/synthetic/workspace", { stream: () => createAssistantMessageEventStream() });
+// @ts-expect-error the old completion wrapper is not a second local model interface
+new LocalAgent("/synthetic/workspace", { complete: async () => ({ role: "assistant", content: "old" }) });
 function scoped(action: PreparedAction) {
   if (action.operation === "close") {
     const id: string = action.args.id;

@@ -56,7 +56,7 @@ export function createEvaluator(deps: EvaluatorDeps) {
       role: "authority",
       system: (deps.prompt ?? readPrompt)("AUTHORITY"),
       tools: deps.registry.definitions("authority"),
-      history: [{ role: "user", content: JSON.stringify(input) }],
+      engineHistory: [{ role: "user", content: JSON.stringify(input), timestamp: 0 }],
     };
     try {
       const person = PersonId.parse(personId);

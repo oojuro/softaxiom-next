@@ -1,3 +1,4 @@
+import { fixtureModel } from './engine-fixture.js';
 // SPDX-FileCopyrightText: 2026 Soft Axiom contributors
 // SPDX-License-Identifier: Apache-2.0
 import test from 'node:test';
@@ -81,10 +82,10 @@ test('browser-only subscriptions never send private curated memory to the model'
     allowedActions: ['browser.read'], origins: ['https://example.test'] });
   db.ingest('source', [{ id: 'one', kind: 'ci.failed', summary: 'Synthetic failure' }]);
   let seen;
-  const result = await workOnce(db, { model: { async complete(messages, tools) {
+  const result = await workOnce(db, { model: fixtureModel({ async complete(messages, tools) {
     seen = { messages, tools };
     return { role: 'assistant', content: 'Synthetic task complete.' };
-  } } });
+  } }) });
   assert.equal(result.status, 'completed');
   assert.equal(JSON.stringify(seen.messages).includes('private-fixture-content'), false);
   assert.equal(seen.tools.some(tool => tool.function.name === 'memory'), false);
@@ -157,24 +158,24 @@ test('real browser task persists exact approval and resumes without repeating a 
   let target, calls = 0;
   const tool = (operation, args) => ({ role: 'assistant', content: null, tool_calls: [{ id: `call-${++calls}`, type: 'function',
     function: { name: 'browser', arguments: JSON.stringify({ operation, args }) } }] });
-  const model = { async complete(messages) {
+  const model = fixtureModel({ async complete(messages) {
     const previous = messages.at(-1);
     if (previous.role !== 'tool') return tool('navigate', { url: origin });
     const result = JSON.parse(previous.content).result;
     if (result.id && !result.text) { target = result.id; return tool('snapshot', { id: target }); }
     assert.match(result.text, /synthetic/i);
     return tool('click', { id: target, selector: '#send' });
-  } };
+  } });
   const paused = await workOnce(db, { model });
   assert.equal(paused.status, 'waiting_approval'); assert.equal(clicks(), 0);
   const action = db.action(paused.action); assert.equal(action.status, 'pending');
   assert.equal(db.task(paused.task).events[0].read_at, null);
   db.approve(action.id);
-  const finalModel = { async complete(messages) {
+  const finalModel = fixtureModel({ async complete(messages) {
     const context = JSON.parse(messages.find(m => m.content?.startsWith('{"type":"outside_event_data_and_runtime_receipts"')).content).data;
     assert.equal(context.receipts[0].status, 'succeeded');
     return { role: 'assistant', content: 'The approved synthetic action completed once.' };
-  } };
+  } });
   const finished = await workOnce(db, { model: finalModel });
   assert.equal(finished.status, 'completed');
   for (let i = 0; i < 100 && clicks() === 0; i++) await new Promise(done => setTimeout(done, 10));

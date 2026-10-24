@@ -9,23 +9,16 @@ import type { ModelRequest } from "./prompt.ts";
 // Provider ceilings and approved tariffs remain release acceptance requirements.
 // Images/files and mixed tool-result content have no trustworthy local text bound and are refused
 // before the SDK could fetch a URL. A future media adapter must provide its own verified bound.
-export function assertInputBound(
-  route: Pick<ModelRoute, "maxInputTokens">,
-  request: ModelRequest,
-): void {
+export function inputBound(request: ModelRequest): number {
+  if (!Array.isArray(request.engineHistory) || "history" in request)
+    throw new CodedError("invalid_input");
   let entries = request.tools.length;
-  for (const message of request.history) {
+  for (const message of request.engineHistory) {
     entries++;
     if (typeof message.content === "string") continue;
     for (const part of message.content) {
       entries++;
-      if (!["text", "reasoning", "tool-call", "tool-result"].includes(part.type))
-        throw new CodedError("invalid_input");
-      if (
-        part.type === "tool-result" &&
-        !["text", "json", "error-text", "error-json"].includes(part.output.type)
-      )
-        throw new CodedError("invalid_input");
+      if (!["text", "thinking", "toolCall"].includes(part.type)) throw new CodedError("invalid_input");
     }
   }
   let encoded: string;
@@ -33,17 +26,21 @@ export function assertInputBound(
     encoded = JSON.stringify({
       system: request.system,
       tools: request.tools,
-      history: request.history,
+      engineHistory: request.engineHistory,
       context: request.context,
     });
   } catch {
     throw new CodedError("invalid_input");
   }
   const bound = Buffer.byteLength(encoded, "utf8") * 2 + 512 + entries * 64;
-  if (
-    !Number.isSafeInteger(route.maxInputTokens) ||
-    route.maxInputTokens <= 0 ||
-    bound > route.maxInputTokens
-  )
-    throw new CodedError("context_overflow");
+  return bound;
+}
+
+export function assertInputBound(
+  route: Pick<ModelRoute, "maxInputTokens">,
+  request: ModelRequest,
+): void {
+  const bound = inputBound(request);
+  if (!Number.isSafeInteger(route.maxInputTokens) || route.maxInputTokens <= 0 ||
+    bound > route.maxInputTokens) throw new CodedError("context_overflow");
 }
