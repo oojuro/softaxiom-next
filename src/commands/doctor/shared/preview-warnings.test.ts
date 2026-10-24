@@ -475,57 +475,38 @@ describe("doctor preview warnings", () => {
     expectSingleWarningContaining(warnings, "channels.openclaw-weixin: dangling channel config");
   });
 
-  it("warns when a configured external channel plugin is omitted from plugins.allow", async () => {
-    manifestState.plugins = [
-      manifest("discord", ["discord"], "global"),
-      manifest("brave", ["brave"]),
-    ];
-
-    const warnings = await collectDoctorPreviewWarnings({
-      cfg: {
-        plugins: { allow: ["brave"] },
-        channels: {
-          discord: {
-            enabled: true,
-            token: {
-              source: "env",
-              provider: "default",
-              id: "DISCORD_BOT_TOKEN",
-            },
-          },
+  it.each<[OpenClawConfig["plugins"], string, string]>([
+    [
+      { allow: ["brave"] },
+      'plugin "discord" is installed but omitted from plugins.allow.',
+      'Include "discord" in plugins.allow',
+    ],
+    [
+      { enabled: false },
+      "plugins.enabled=false blocks channel plugins globally.",
+      "blocks channel plugins globally",
+    ],
+  ])(
+    "reports channel plugin blocker %j instead of setup advice",
+    async (plugins, reason, advice) => {
+      manifestState.plugins = [
+        manifest("discord", ["discord"], "global"),
+        manifest("brave", ["brave"]),
+      ];
+      const warnings = await collectDoctorPreviewWarnings({
+        cfg: {
+          plugins,
+          channels: { discord: { enabled: true, token: "configured", groupPolicy: "allowlist" } },
         },
-      },
-    });
-
-    const warning = expectSingleWarningContaining(
-      warnings,
-      'channels.discord: channel is configured, but plugin "discord" is installed but omitted from plugins.allow.',
-    );
-    expect(warning).toContain('Include "discord" in plugins.allow');
-    expect(warning).not.toContain("first-time setup mode");
-  });
-
-  it("warns when channel plugins are blocked globally", async () => {
-    manifestState.plugins = [manifest("telegram", ["telegram"])];
-
-    const warnings = await collectDoctorPreviewWarnings({
-      cfg: {
-        channels: {
-          telegram: {
-            botToken: "123:abc",
-            groupPolicy: "allowlist",
-          },
-        },
-        plugins: { enabled: false },
-      },
-    });
-
-    const warning = expectSingleWarningContaining(
-      warnings,
-      "channels.telegram: channel is configured, but plugins.enabled=false blocks channel plugins globally.",
-    );
-    expect(warning).not.toContain("first-time setup mode");
-  });
+      });
+      const warning = expectSingleWarningContaining(
+        warnings,
+        `channels.discord: channel is configured, but ${reason}`,
+      );
+      expect(warning).toContain(advice);
+      expect(warning).not.toContain("first-time setup mode");
+    },
+  );
 
   it("uses list agent paths for restrictive tool profile advice", async () => {
     const warnings = await collectProfileConfiguredToolSectionWarningsThroughDoctor({
@@ -559,42 +540,35 @@ describe("doctor preview warnings", () => {
     expect(warning).not.toContain("agents.list");
   });
 
-  it("uses inherited provider alsoAllow for agent provider profile warnings", async () => {
-    const warnings = await collectProfileConfiguredToolSectionWarningsThroughDoctor({
-      tools: { byProvider: { openai: { alsoAllow: ["exec", "process"] } } },
-      agents: {
-        entries: {
-          sage: {
-            tools: {
-              exec: { mode: "allowlist" },
-              byProvider: { "openai/gpt-5": { profile: "messaging" } },
+  it.each([true, false])(
+    "honors provider grants inherited by the agent (global grants=%s)",
+    async (globalGrants) => {
+      const warnings = await collectProfileConfiguredToolSectionWarningsThroughDoctor({
+        tools: {
+          byProvider: {
+            openai: globalGrants ? { alsoAllow: ["exec", "process"] } : { profile: "messaging" },
+          },
+        },
+        agents: {
+          entries: {
+            sage: {
+              ...(globalGrants ? {} : { model: { primary: "openai/gpt-5" } }),
+              tools: {
+                exec: { mode: "allowlist" },
+                byProvider: {
+                  "openai/gpt-5": globalGrants
+                    ? { profile: "messaging" }
+                    : { alsoAllow: ["exec", "process"] },
+                },
+              },
             },
           },
         },
-      },
-    });
+      });
 
-    expect(warnings).toStrictEqual([]);
-  });
-
-  it("uses model-scoped agent provider overrides for inherited provider warnings", async () => {
-    const warnings = await collectProfileConfiguredToolSectionWarningsThroughDoctor({
-      tools: { byProvider: { openai: { profile: "messaging" } } },
-      agents: {
-        entries: {
-          sage: {
-            model: { primary: "openai/gpt-5" },
-            tools: {
-              exec: { mode: "allowlist" },
-              byProvider: { "openai/gpt-5": { alsoAllow: ["exec", "process"] } },
-            },
-          },
-        },
-      },
-    });
-
-    expect(warnings).toStrictEqual([]);
-  });
+      expect(warnings).toStrictEqual([]);
+    },
+  );
 
   it("does not warn for configured tool sections when the profile id is unknown", async () => {
     const malformedConfig = {
@@ -622,23 +596,26 @@ describe("doctor preview warnings", () => {
     expect(warnings).toStrictEqual([]);
   });
 
-  it("still warns when provider policy blocks the runtime message grant", async () => {
-    const cfg = messagePolicyConfig({ openai: { allow: ["read"] } });
-
-    expectWarningsContaining(await collectVisibleReplyToolPolicyWarningsThroughDoctor(cfg), [
-      'messages.groupChat.visibleReplies is set to "message_tool"',
-    ]);
-    expect(await collectChannelBoundMessageToolPolicyWarningsThroughDoctor(cfg)).toEqual([
-      '- Agent "main" is routed from channel "discord", but the message tool is unavailable for that agent; explicit channel actions such as sendAttachment, upload-file, thread-reply, or reply can fail. Add "message" to the agent tool allowlist, add "group:messaging", or switch the agent to a profile that includes messaging tools.',
-    ]);
-  });
-
-  it("keeps provider-specific message grants when checking provider policy", async () => {
-    const cfg = messagePolicyConfig({ openai: { alsoAllow: ["message"] } });
-
-    expect(await collectVisibleReplyToolPolicyWarningsThroughDoctor(cfg)).toStrictEqual([]);
-    expect(await collectChannelBoundMessageToolPolicyWarningsThroughDoctor(cfg)).toStrictEqual([]);
-  });
+  it.each([false, true])(
+    "checks the runtime message grant against provider policy (allowed=%s)",
+    async (allowed) => {
+      const cfg = messagePolicyConfig({
+        openai: allowed ? { alsoAllow: ["message"] } : { allow: ["read"] },
+      });
+      const warnings = await collectDoctorPreviewWarnings({ cfg });
+      expectWarningsContaining(
+        warnings.filter((warning) => warning.includes("visibleReplies is set")),
+        allowed ? [] : ['messages.groupChat.visibleReplies is set to "message_tool"'],
+      );
+      expect(warnings.filter((warning) => warning.includes("is routed from channel"))).toEqual(
+        allowed
+          ? []
+          : [
+              '- Agent "main" is routed from channel "discord", but the message tool is unavailable for that agent; explicit channel actions such as sendAttachment, upload-file, thread-reply, or reply can fail. Add "message" to the agent tool allowlist, add "group:messaging", or switch the agent to a profile that includes messaging tools.',
+            ],
+      );
+    },
+  );
 
   it("warns separately for explicit global and group visible reply policy mismatches", async () => {
     const warnings = await collectVisibleReplyToolPolicyWarningsThroughDoctor({
