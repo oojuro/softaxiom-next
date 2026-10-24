@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -36,9 +35,10 @@ import {
 } from "../../session-placement-admission.js";
 import { makeEmbeddedRunnerAttempt } from "../../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import * as workspaceSandbox from "../../workspace-sandbox.js";
-import { requireGit } from "../../worktrees/git.js";
-import { insertRegistryWorktree } from "../../worktrees/registry.js";
-import { initializeManagedWorktreeTestRepository } from "../../worktrees/service.test-support.js";
+import {
+  initializeManagedWorktreeTestRepository,
+  materializeManagedWorktreeFixture,
+} from "../../worktrees/service.test-support.js";
 import type { ManagedWorktreeRecord } from "../../worktrees/types.js";
 import { createEmbeddedRunLaneController } from "./lane-controller.js";
 import { dispatchCases } from "./run-attempt-dispatch.cases.test-support.js";
@@ -222,30 +222,17 @@ it.each(dispatchCases)(
       let realWorktree: ManagedWorktreeRecord | undefined;
       if (realManagedWorkspace) {
         const repoRoot = await initializeManagedWorktreeTestRepository(state.root);
-        const checkout = state.path("managed-checkout");
-        await requireGit(repoRoot, [
-          "worktree",
-          "add",
-          "--quiet",
-          "-b",
-          "openclaw/remote-fixture",
-          checkout,
-        ]);
-        workspaceDir = await fs.realpath(checkout);
-        realWorktree = {
-          id: randomUUID(),
+        realWorktree = await materializeManagedWorktreeFixture({
+          env: process.env,
+          stateDir: state.root,
           name: "remote-fixture",
           repoFingerprint: "remote-fixture",
           repoRoot,
-          path: workspaceDir,
-          branch: "openclaw/remote-fixture",
-          baseRef: "main",
           ownerKind: "session",
           ownerId: "global",
-          createdAt: Date.now(),
-          lastActiveAt: Date.now(),
-        };
-        await insertRegistryWorktree(process.env, realWorktree, { provisionedPaths: [] });
+          now: Date.now(),
+        });
+        workspaceDir = await fs.realpath(realWorktree.path);
         await upsertSessionEntryCore(
           { agentId, sessionKey: "global" },
           {

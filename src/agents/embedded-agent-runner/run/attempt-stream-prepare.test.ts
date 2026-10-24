@@ -6,10 +6,7 @@ import { captureSessionTarget } from "../../../sessions/session-controller.lifec
 import { createUserTurnTranscriptRecorder } from "../../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../../sessions/user-turn-transcript.test-support.js";
 import { createDeferredCore } from "../../../shared/deferred.js";
-import {
-  prepareAgentRunAdmission,
-  createOperationalRunInstanceRef,
-} from "../../admitted-run-context.js";
+import { prepareSystemAgentRunAdmission } from "../../admitted-run-context.js";
 import { registerPendingAgentQuestion } from "../../harness/gateway-question.js";
 import { withPreparedEmbeddedRunToolAuthority } from "../../harness/tool-authority.runtime.js";
 import { isAgentRunRestartAbortReason } from "../../run-termination.js";
@@ -222,15 +219,12 @@ describe("prepareEmbeddedAttemptStream", () => {
   ] as const)(
     "checks %s during real session %s preparation before its effect",
     async (transition, route) => {
-      const admission = prepareAgentRunAdmission({
-        cfg: {},
-        operationalRunInstance: createOperationalRunInstanceRef("run-output-schema"),
-        facts: {
-          agentId: "main",
-          runId: "run-output-schema",
-          ingress: { kind: "system", state: "present", boundary: "queue-test" },
-        },
-      });
+      const admission = prepareSystemAgentRunAdmission(
+        {},
+        "run-output-schema",
+        "main",
+        "queue-test",
+      );
       try {
         const admittedRunContext = await admission.admit("embedded", "queue-test");
         await withPreparedEmbeddedRunToolAuthority(
