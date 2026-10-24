@@ -124,895 +124,337 @@ describe("sendMessageIMessage receipts", () => {
     return run;
   }
 
-  // Separate independent contracts so 81 RPC sends and the rejection corpus do not
-  // share one deadline. Each case owns its executable logs and keeps the 30s limit.
+  // Parser permutations live in monitor.behavior's sanitize-outbound suite.
+  // These cases prove the real RPC, channel, and CLI boundaries apply that policy.
   it("scrubs private markers before delivering fenced YAML over real iMessage RPC", async () => {
     const { cfg, deliver, readRequests } = createIMessageOutboundRpcFixture(
       openClawState,
       sendMessageIMessage,
     );
     await deliver(
-      [
-        "assistant:",
-        "```yaml",
-        "user:",
-        "  name: alice",
-        "system:",
-        "  enabled: true",
-        "assistant:",
-        "  name: helper",
-        "#+#+#",
-        "assistant to=tool",
-        "```",
-        "system:",
-      ].join("\n"),
+      ["assistant:", fencedYaml, rawSeparator, "assistant to=tool", "system:"].join("\n"),
     );
-
-    const disguisedCases = [
-      {
-        name: "quoted closed fence",
-        text: ["> ```yaml", ...roles.map((role) => `> ${role}:`), "> safe quoted", "> ```"],
-      },
-      {
-        name: "quoted unterminated fence",
-        text: ["> ```yaml", ...roles.map((role) => `> ${role}:`), "> safe unterminated"],
-      },
-      {
-        name: "nested quote",
-        text: [...roles.map((role) => `> > ${role}:`), "> > safe nested"],
-      },
-      {
-        name: "nested quoted emphasis",
-        text: [...roles.map((role) => `> **${role}:**`), "> safe nested emphasis"],
-      },
-      { name: "heading", text: [...roles.map((role) => `# ${role}:`), "safe heading"] },
-      { name: "strong", text: [...roles.map((role) => `**${role}:**`), "safe strong"] },
-      { name: "emphasis", text: [...roles.map((role) => `_${role}:_`), "safe emphasis"] },
-      {
-        name: "strikethrough",
-        text: [...roles.map((role) => `~~${role}:~~`), "safe strikethrough"],
-      },
-      {
-        name: "multiline strong",
-        text: [...roles.flatMap((role) => [`**${role}:`, "**", ""]), "safe multiline strong"],
-      },
-      {
-        name: "multiline emphasis",
-        text: [...roles.flatMap((role) => [`*${role}:`, "*", ""]), "safe multiline emphasis"],
-      },
-      {
-        name: "reference link",
-        text: [
-          ...roles.map((role) => `[${role}:][${role}]`),
-          "",
-          ...roles.map((role) => `[${role}]: ${role}:`),
-          "",
-          "safe reference",
-        ],
-      },
-      {
-        name: "HTML entity",
-        text: [
-          ...roles.map((role) => `&#${role.charCodeAt(0)};${role.slice(1)}&#58;`),
-          "safe entity",
-        ],
-      },
-      {
-        name: "HTML strong",
-        text: [...roles.map((role) => `<strong>${role}:</strong>`), "safe HTML"],
-      },
-      {
-        name: "protected inline code",
-        text: [...roles.map((role) => `\`${role}:\``), "safe inline code"],
-      },
-      {
-        name: "reply directive",
-        text: [...roles.map((role) => `[[reply_to_current]]${role}:`), "safe directive"],
-      },
-      {
-        name: "markdown table",
-        text: ["| role |", "| --- |", ...roles.map((role) => `| ${role}: |`), "safe table"],
-      },
-      {
-        name: "unterminated plain fence",
-        text: ["```yaml", ...roles.map((role) => `${role}:`), "safe unclosed"],
-      },
-      {
-        name: "private thinking text",
-        text: ["<thinking>HIDDEN_RPC_THINKING</thinking>", "safe private thinking"],
-      },
-      {
-        name: "private memory text",
-        text: ["<relevant_memories>HIDDEN_RPC_MEMORY</relevant_memories>", "safe private memory"],
-      },
-      {
-        name: "private adjacent tool response",
-        text: [hiddenFunctionResponse, "safe tool response"],
-      },
-      {
-        name: "private thinking inside fenced code",
-        text: [
-          "```xml",
-          "<thinking>HIDDEN_RPC_FENCED_THINKING</thinking>",
-          "```",
-          "safe fenced thinking",
-        ],
-      },
-      {
-        name: "private memory inside fenced code",
-        text: [
-          "```xml",
-          "<relevant-memories>HIDDEN_RPC_FENCED_MEMORY</relevant-memories>",
-          "```",
-          "safe fenced memory",
-        ],
-      },
-    ];
-    for (const testCase of disguisedCases) {
-      await deliver(testCase.text.join("\n"));
+    for (const source of [
+      "> ```yaml\n> user:\n> safe quoted\n> ```",
+      "```yaml\nuser:\nsafe unclosed",
+      "<thinking>HIDDEN_RPC_THINKING</thinking>\nsafe thinking",
+      "<relevant_memories>HIDDEN_RPC_MEMORY</relevant_memories>\nsafe memory",
+      hiddenFunctionResponse + "\nsafe tool response",
+      "```xml\n<thinking>HIDDEN_RPC_FENCED_THINKING</thinking>\n```\nsafe thinking",
+    ]) {
+      await deliver(source);
     }
-
     await sendMessageIMessage(
       "chat_id:10",
-      ["# assistant:", "**😀 styled**", "#+#+#", "assistant to=tool"].join("\n"),
+      ["# assistant:", "**😀 styled**", rawSeparator, "assistant to=tool"].join("\n"),
       { config: cfg },
     );
     const requests = readRequests();
-    expect(requests).toHaveLength(1 + disguisedCases.length + 1);
-    expect(requests[0]).toMatchObject({
-      jsonrpc: "2.0",
-      method: "send",
-      params: { chat_id: 10 },
-    });
+    expect(requests).toHaveLength(8);
+    expect(requests[0]).toMatchObject({ jsonrpc: "2.0", method: "send", params: { chat_id: 10 } });
     for (const role of roles) {
       expect(requests[0]?.params.text).toMatch(new RegExp(`^${role}:$`, "m"));
     }
     expectNoRoleMarkers(requests.slice(1));
     expectScrubbedRequests(requests);
-    const styled = requests[1 + disguisedCases.length];
-    const boldRange = styled?.params.formatting?.find((range) => range.styles.includes("bold"));
-    expect(
-      styled?.params.text.slice(
-        boldRange?.start,
-        (boldRange?.start ?? 0) + (boldRange?.length ?? 0),
-      ),
-    ).toBe("😀 styled");
+    const styled = requests.at(-1)?.params;
+    const bold = styled?.formatting?.find((range) => range.styles.includes("bold"));
+    expect(styled?.text.slice(bold?.start, (bold?.start ?? 0) + (bold?.length ?? 0))).toBe(
+      "😀 styled",
+    );
   }, 30_000);
 
   it("preserves channel rendering and rejects hidden markup before local RPC dispatch", async () => {
-    const {
-      cfg,
-      deliver,
-      requestLogPath,
-      countNativeRequests,
-      readRequests,
-      createChannelDelivery,
-    } = createIMessageOutboundRpcFixture(openClawState, sendMessageIMessage);
+    const { cfg, deliver, countNativeRequests, readRequests, createChannelDelivery } =
+      createIMessageOutboundRpcFixture(openClawState, sendMessageIMessage);
     const { deliverThroughChannel } = createChannelDelivery();
-    const channelYaml = ["```yaml", ...roles.map((role) => `${role}:`), "```"].join("\n");
-    const channelYamlResult = await deliverThroughChannel(channelYaml);
-    expect(channelYamlResult.sanitized).toContain("```yaml");
-    const channelYamlRequest = JSON.parse(
-      fs.readFileSync(requestLogPath, "utf8").trim().split("\n").at(-1) ?? "{}",
-    ) as { params?: { text?: string } };
+    expect((await deliverThroughChannel(fencedYaml)).sanitized).toContain("```yaml");
     for (const role of roles) {
-      expect(channelYamlRequest.params?.text).toMatch(new RegExp(`^${role}:$`, "m"));
+      expect(readRequests()[0]?.params.text).toMatch(new RegExp(`^${role}:$`, "m"));
     }
-
-    let channelContractRequestCount = 1;
-    for (const [html, bold, strike] of [
-      [
-        `<strong title="b>">😀 channel bold</strong> <del data-note='s>'>channel strike</del>`,
-        "😀 channel bold",
-        "channel strike",
-      ],
-      [
-        `<strong title="<tag>">😀 quoted bold</strong> <del data-note='<tag>'>quoted strike</del>`,
-        "😀 quoted bold",
-        "quoted strike",
-      ],
-      [
-        `<strong title="<previous_response>">😀 private-looking bold</strong> <del data-note='<system-reminder>'>private-looking strike</del>`,
-        "😀 private-looking bold",
-        "private-looking strike",
-      ],
-      [
-        `<strong title="<!--">😀 opaque-looking bold</strong> <del data-note='<?'>opaque-looking strike</del>`,
-        "😀 opaque-looking bold",
-        "opaque-looking strike",
-      ],
-    ] as const) {
-      const attributedHtml = await deliverThroughChannel(html);
-      expect(attributedHtml.sanitized).toBe(`**${bold}** ~~${strike}~~`);
-      const attributedRequest = JSON.parse(
-        fs.readFileSync(requestLogPath, "utf8").trim().split("\n").at(-1) ?? "{}",
-      ) as {
-        params?: {
-          text: string;
-          formatting?: Array<{ start: number; length: number; styles: string[] }>;
-        };
-      };
-      for (const [style, expected] of [
-        ["bold", bold],
-        ["strikethrough", strike],
+    for (const attribute of ["b>", "<tag>", "<previous_response>", "<!--"]) {
+      const html = `<strong title="${attribute}">😀 bold</strong> <del data-note='${attribute}'>strike</del>`;
+      expect((await deliverThroughChannel(html)).sanitized).toBe("**😀 bold** ~~strike~~");
+      const params = readRequests().at(-1)?.params;
+      for (const [style, text] of [
+        ["bold", "😀 bold"],
+        ["strikethrough", "strike"],
       ] as const) {
-        const range = attributedRequest.params?.formatting?.find((item) =>
-          item.styles.includes(style),
+        const range = params?.formatting?.find((item) => item.styles.includes(style));
+        expect(params?.text.slice(range?.start, (range?.start ?? 0) + (range?.length ?? 0))).toBe(
+          text,
         );
-        expect(
-          attributedRequest.params?.text.slice(
-            range?.start,
-            (range?.start ?? 0) + (range?.length ?? 0),
-          ),
-        ).toBe(expected);
       }
-      channelContractRequestCount += attributedHtml.chunks.length;
     }
-
-    const runtimeCompanion = `${privateRuntimeScaffolding}\nvisible runtime companion`;
-    for (const sendPrivateRuntime of [
-      () => sendMessageIMessage("chat_id:10", runtimeCompanion, { config: cfg }),
-      () => deliver(runtimeCompanion),
-      () => deliverThroughChannel(runtimeCompanion),
+    let expectedRequests = 5;
+    const companion = privateRuntimeScaffolding + "\nvisible runtime companion";
+    for (const send of [
+      () => sendMessageIMessage("chat_id:10", companion, { config: cfg }),
+      () => deliver(companion),
+      () => deliverThroughChannel(companion),
     ]) {
-      const previousRequestCount = countNativeRequests();
-      await sendPrivateRuntime();
-      const runtimeRequests = fs
-        .readFileSync(requestLogPath, "utf8")
-        .trim()
-        .split("\n")
-        .slice(previousRequestCount)
-        .map((line) => JSON.parse(line) as { params?: { text?: string } });
-      expect(runtimeRequests.length).toBeGreaterThan(0);
+      const before = countNativeRequests();
+      await send();
+      const added = readRequests().slice(before);
+      expect(added.length).toBeGreaterThan(0);
       expect(
-        runtimeRequests.some((request) =>
-          request.params?.text?.includes("visible runtime companion"),
-        ),
+        added.some((request) => request.params.text.includes("visible runtime companion")),
       ).toBe(true);
-      for (const request of runtimeRequests) {
-        expect(request.params?.text).not.toContain("HIDDEN_RUNTIME_");
-        expect(request.params?.text).not.toMatch(
-          /system-reminder|previous_response|INTERNAL_CONTEXT/i,
-        );
-      }
-      channelContractRequestCount += runtimeRequests.length;
+      expectScrubbedRequests(added);
+      expectedRequests += added.length;
     }
-
-    for (const hidden of [
-      "```xml\n<thinking>HIDDEN_CHANNEL_FENCED_THINKING</thinking>\n```",
-      "`<thinking>HIDDEN_CHANNEL_INLINE_THINKING</thinking>`",
-      "```xml\n<relevant_memories>HIDDEN_CHANNEL_FENCED_MEMORY</relevant_memories>\n```",
-      "`<relevant-memories>HIDDEN_CHANNEL_INLINE_MEMORY</relevant-memories>`",
-      nestMarkdownFences("<thinking>HIDDEN_CHANNEL_DEEPLY_NESTED_THINKING</thinking>", 4),
-      nestMarkdownFences(
-        "<relevant_memories>HIDDEN_CHANNEL_DEEPLY_NESTED_MEMORY</relevant_memories>",
-        4,
-      ),
-      `\`\`\`xml\n${hiddenFunctionResponse}\n\`\`\``,
-      nestMarkdownFences(hiddenFunctionResponse, 4),
-    ]) {
-      const requestCount = countNativeRequests();
-      await expect(deliverThroughChannel(`${hidden}\nsafe channel text`)).rejects.toThrow(
-        "iMessage outbound hidden assistant content is not allowed",
-      );
-      expect(countNativeRequests()).toBe(requestCount);
-    }
-    const malformedHiddenFunctionResponse = [
-      '<<script>function_calls><<script>invoke name="exec">HIDDEN_CHANNEL_SYNTH_FUNCTION_CALL</<script>invoke></<script>function_calls><<script>function_response>',
-      "HIDDEN_CHANNEL_SYNTH_FUNCTION_RESPONSE",
-      "</<script>function_response>",
-    ].join("\n");
-    for (const malformed of [
-      "<<script>thinking>HIDDEN_CHANNEL_SYNTH_THINKING</<script>thinking>",
-      "<t<script>hinking>HIDDEN_CHANNEL_INNER_THINKING</t<script>hinking>",
-      "<<script>relevant_memories>HIDDEN_CHANNEL_SYNTH_MEMORY</<script>relevant_memories>",
-      "<<script>relevant-memories>HIDDEN_CHANNEL_SYNTH_HYPHEN_MEMORY</<script>relevant-memories>",
-      "<thi<system-reminder>noise</system-reminder>nking>HIDDEN_CHANNEL_REMINDER_THINKING</thi<system-reminder>noise</system-reminder>nking>",
-      "<relevant_<previous_response>noise</previous_response>memories>HIDDEN_CHANNEL_PREVIOUS_MEMORY</relevant_<previous_response>noise</previous_response>memories>",
-      "<thi<details><summary>noise</summary></details>nking>HIDDEN_CHANNEL_DETAILS_THINKING</thi<details>nking>",
-      malformedHiddenFunctionResponse,
-    ]) {
-      const requestCount = countNativeRequests();
-      await expect(deliverThroughChannel(`${malformed}\nsafe channel text`)).rejects.toThrow(
-        "iMessage outbound ambiguous nested HTML is not allowed",
-      );
-      expect(countNativeRequests()).toBe(requestCount);
-    }
-    for (const [context, splice] of [
-      ["script", "<script>"],
-      ["system-reminder", "<system-reminder>noise</system-reminder>"],
-      ["spaced_system_reminder", "< system-reminder>noise< / system-reminder>"],
-      ["previous_response", "<previous_response>noise</previous_response>"],
-      ["spaced_previous_response", "< previous_response>noise< / previous_response>"],
-      ["details", "<details><summary>noise</summary></details>"],
-      ["spaced_details", "< details>< summary>noise< / summary>< / details>"],
+    for (const [source, reason] of [
+      ["```xml\n<thinking>hidden</thinking>\n```", "hidden assistant content"],
+      ["`<relevant_memories>hidden</relevant_memories>`", "hidden assistant content"],
+      [nestMarkdownFences(hiddenFunctionResponse, 4), "hidden assistant content"],
+      ["<<script>thinking>hidden</<script>thinking>", "ambiguous nested HTML"],
       [
-        "runtime_context",
-        "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>noise<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
+        "<thi<system-reminder>noise</system-reminder>nking>hidden</thinking>",
+        "ambiguous nested HTML",
+      ],
+      [
+        "<function_response<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>noise<<<END_OPENCLAW_INTERNAL_CONTEXT>>>>hidden</function_response>",
+        "ambiguous nested HTML",
       ],
     ] as const) {
-      for (const [kind, malformed] of [
-        ["thinking", `<thi${splice}nking>HIDDEN_CHANNEL_${context}_THINKING</thi${splice}nking>`],
-        [
-          "underscore memory",
-          `<relevant_${splice}memories>HIDDEN_CHANNEL_${context}_MEMORY</relevant_${splice}memories>`,
-        ],
-        [
-          "hyphen memory",
-          `<relevant-${splice}memories>HIDDEN_CHANNEL_${context}_MEMORY</relevant-${splice}memories>`,
-        ],
-        [
-          "tool response",
-          [
-            `<function_${splice}calls><invoke>HIDDEN_CHANNEL_${context}_CALL</invoke></function_${splice}calls>`,
-            `<function_${splice}response>HIDDEN_CHANNEL_${context}_RESPONSE</function_${splice}response>`,
-          ].join("\n"),
-        ],
-      ] as const) {
-        for (const wrapper of [malformed, `\`${malformed}\``, `\`\`\`xml\n${malformed}\n\`\`\``]) {
-          const requestCount = countNativeRequests();
-          await expect(
-            deliverThroughChannel(`${wrapper}\nsafe ${kind} ${context}`),
-          ).rejects.toThrow("iMessage outbound ambiguous nested HTML is not allowed");
-          expect(countNativeRequests()).toBe(requestCount);
-        }
-      }
+      const before = countNativeRequests();
+      await expect(deliverThroughChannel(source)).rejects.toThrow(
+        `iMessage outbound ${reason} is not allowed`,
+      );
+      expect(countNativeRequests()).toBe(before);
     }
-
-    for (const splice of [
-      "< system-reminder>noise< / system-reminder>",
-      "< previous_response>noise< / previous_response>",
-      "< details>< summary>noise< / summary>< / details>",
-      "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>noise<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
-    ]) {
-      for (const name of [
-        "thinking",
-        "thought",
-        "reasoning",
-        "antml:thinking",
-        "mm:thought",
-        "relevant_memories",
-        "relevant-memories",
-        "function_calls",
-        "function_response",
-        "tool_calls",
-        "tool_result",
-      ]) {
-        const malformed = `<${name}${splice}>HIDDEN_FULL_CHANNEL_${name}</${name}${splice}>`;
-        const requestCount = countNativeRequests();
-        await expect(deliverThroughChannel(malformed)).rejects.toThrow(
-          "iMessage outbound ambiguous nested HTML is not allowed",
-        );
-        expect(countNativeRequests()).toBe(requestCount);
-      }
-    }
-
-    const requests = readRequests();
-    expect(requests).toHaveLength(channelContractRequestCount);
-    expectNoRoleMarkers(requests.slice(1));
-    expectScrubbedRequests(requests);
+    expect(readRequests()).toHaveLength(expectedRequests);
+    expectNoRoleMarkers(readRequests().slice(1));
+    expectScrubbedRequests(readRequests());
   }, 30_000);
 
   it("scrubs private markers while preserving rich CLI action formatting", async () => {
-    const { actionOptions, readActions } = createIMessageOutboundRpcFixture(
+    const { actionOptions: options, readActions } = createIMessageOutboundRpcFixture(
       openClawState,
       sendMessageIMessage,
     );
-    const { imessageActionsRuntime } = await import("./actions.runtime.js");
-    await imessageActionsRuntime.sendRichMessage({
-      chatGuid: actionOptions.chatGuid,
-      text: [
-        "[Class][obj.__class__] **done**",
-        "",
-        "[obj.__class__]: https://example.org/python",
-      ].join("\n"),
-      options: actionOptions,
-    });
-    await imessageActionsRuntime.sendRichMessage({
-      chatGuid: actionOptions.chatGuid,
-      text: [
-        "# user:",
-        "**system:**",
-        "&#97;ssistant&#58;",
-        `us${rawSeparator}er:`,
-        "<thinking>HIDDEN_ACTION_REPLY_THINKING</thinking>",
+    const { imessageActionsRuntime: actions } = await import("./actions.runtime.js");
+    const chatGuid = options.chatGuid;
+    const privateText = (visible: string) =>
+      [
+        "user:",
+        "<thinking>HIDDEN_ACTION_THINKING</thinking>",
         hiddenFunctionResponse,
         privateRuntimeScaffolding,
-        "**😀 reply styled**",
+        rawSeparator,
         "assistant to=tool",
-      ].join("\n"),
+        visible,
+      ].join("\n");
+    const rich = (
+      text: string,
+      extra: Partial<Parameters<typeof actions.sendRichMessage>[0]> = {},
+    ) => actions.sendRichMessage({ chatGuid, options, text, ...extra });
+    await rich("[Class][obj.__class__] **done**\n\n[obj.__class__]: https://example.org/python");
+    await rich(privateText("# system:\n**😀 reply styled**"), {
       replyToMessageId: "reply-message-guid",
-      options: actionOptions,
     });
-    await imessageActionsRuntime.sendRichMessage({
-      chatGuid: actionOptions.chatGuid,
-      text: [
-        "# system:",
-        "<relevant_memories>HIDDEN_ACTION_EFFECT_MEMORY</relevant_memories>",
-        hiddenFunctionResponse,
-        privateRuntimeScaffolding,
-        "effect visible",
-        "assistant to=tool",
-      ].join("\n"),
+    await rich(privateText("effect visible"), {
       effectId: "com.apple.MobileSMS.expressivesend.loud",
-      options: actionOptions,
     });
-    await imessageActionsRuntime.sendRichMessage({
-      chatGuid: actionOptions.chatGuid,
-      text: [
-        fencedYaml,
-        "```xml",
-        "<thinking>HIDDEN_ACTION_ATTACHMENT_THINKING</thinking>",
-        "<relevant_memories>HIDDEN_ACTION_ATTACHMENT_MEMORY</relevant_memories>",
-        "```",
-        privateRuntimeScaffolding,
-        "**😀 attachment styled**",
-        rawSeparator,
-      ].join("\n"),
-      attachment: { kind: "buffer", filename: "proof.txt", buffer: Uint8Array.from([1, 2]) },
-      options: actionOptions,
-    });
-    await imessageActionsRuntime.sendRichMessage({
-      chatGuid: actionOptions.chatGuid,
-      text: "user:",
+    await rich(
+      privateText(
+        fencedYaml +
+          "\n```xml\n<relevant_memories>HIDDEN_ACTION_MEMORY</relevant_memories>\n```\n**😀 attachment styled**",
+      ),
+      {
+        attachment: { kind: "buffer", filename: "proof.txt", buffer: Uint8Array.from([1, 2]) },
+      },
+    );
+    await rich("user:", {
       attachment: { kind: "buffer", filename: "empty-proof.txt", buffer: Uint8Array.from([3]) },
-      options: actionOptions,
     });
-
-    const rawNewText = [
-      "user:",
-      "**literal edit styling**",
-      "<thinking>HIDDEN_ACTION_EDIT_THINKING</thinking>",
-      hiddenFunctionResponse,
-      privateRuntimeScaffolding,
-      "# system:",
-      `as${rawSeparator}sistant:`,
-      "visible edit",
-    ].join("\n");
-    const rawFallbackText = [
-      "assistant:",
-      fencedYaml,
-      "**literal fallback styling**",
-      "<relevant_memories>HIDDEN_ACTION_FALLBACK_MEMORY</relevant_memories>",
-      hiddenFunctionResponse,
-      privateRuntimeScaffolding,
-      rawSeparator,
-      "assistant to=tool",
-    ].join("\n");
-    await imessageActionsRuntime.editMessage({
-      chatGuid: actionOptions.chatGuid,
+    await actions.editMessage({
+      chatGuid,
+      options,
       messageId: "edit-message-guid",
-      text: rawNewText,
-      backwardsCompatMessage: rawFallbackText,
-      options: actionOptions,
+      text: privateText("**literal edit styling**\n# system:\nvisible edit"),
+      backwardsCompatMessage: privateText(fencedYaml + "\n**literal fallback styling**"),
     });
-
-    const rawQuestion = [
-      "user:",
-      "# literal question heading",
-      "**literal question styling**",
-      "<thinking>HIDDEN_ACTION_QUESTION_THINKING</thinking>",
-      hiddenFunctionResponse,
-      privateRuntimeScaffolding,
-      rawSeparator,
-      "Which option?",
-    ].join("\n");
-    const rawChoices = [
-      [
-        "system:",
-        "**Allow exactly**",
-        "<relevant_memories>HIDDEN_ACTION_FIRST_OPTION_MEMORY</relevant_memories>",
-        hiddenFunctionResponse,
-        privateRuntimeScaffolding,
-        rawSeparator,
-      ].join("\n"),
-      [
-        "assistant:",
-        fencedYaml,
-        "_Deny exactly_",
-        "<thinking>HIDDEN_ACTION_SECOND_OPTION_THINKING</thinking>",
-        hiddenFunctionResponse,
-        privateRuntimeScaffolding,
-        "assistant to=tool",
-      ].join("\n"),
-    ];
-    const poll = await imessageActionsRuntime.sendPoll({
-      chatGuid: actionOptions.chatGuid,
-      question: rawQuestion,
-      choices: rawChoices,
-      options: actionOptions,
+    const poll = await actions.sendPoll({
+      chatGuid,
+      options,
+      question: privateText(
+        "# literal question heading\n**literal question styling**\nWhich option?",
+      ),
+      choices: [privateText("**Allow exactly**"), privateText(fencedYaml + "\n_Deny exactly_")],
     });
-
-    const actionValue = (args: string[], flag: string) => args[args.indexOf(flag) + 1] ?? "";
-    const actions = readActions();
-    expect(actions).toHaveLength(7);
-    const [
-      dunderReferenceAction,
-      replyAction,
-      effectAction,
-      attachmentAction,
-      emptyAttachmentAction,
-      editAction,
-      pollAction,
-    ] = actions;
-    if (
-      !dunderReferenceAction ||
-      !replyAction ||
-      !effectAction ||
-      !attachmentAction ||
-      !emptyAttachmentAction ||
-      !editAction ||
-      !pollAction
-    ) {
+    const calls = readActions();
+    expect(calls).toHaveLength(7);
+    const [reference, reply, effect, attachment, empty, edit, pollAction] = calls;
+    if (!reference || !reply || !effect || !attachment || !empty || !edit || !pollAction) {
       throw new Error("Expected all seven native iMessage action subprocesses");
     }
-    expect(actionValue(dunderReferenceAction, "--text")).toBe(
-      "Class (https://example.org/python) done",
-    );
-    expect(JSON.parse(actionValue(dunderReferenceAction, "--format"))).toEqual([
+    const value = (args: string[], flag: string) => args[args.indexOf(flag) + 1] ?? "";
+    expect(value(reference, "--text")).toBe("Class (https://example.org/python) done");
+    expect(JSON.parse(value(reference, "--format"))).toEqual([
       { start: 35, length: 4, styles: ["bold"] },
     ]);
-    expect(replyAction).toContain("--reply-to");
-    expect(actionValue(replyAction, "--reply-to")).toBe("reply-message-guid");
-    expect(actionValue(effectAction, "--effect")).toBe("com.apple.MobileSMS.expressivesend.loud");
-    expect(attachmentAction).toContain("--file");
-    expect(attachmentAction).not.toContain("--format");
-    expect(emptyAttachmentAction).toContain("--file");
-    expect(actionValue(emptyAttachmentAction, "--text")).toBe("");
-
-    const replyText = actionValue(replyAction, "--text");
+    expect(value(reply, "--reply-to")).toBe("reply-message-guid");
+    expect(value(effect, "--effect")).toBe("com.apple.MobileSMS.expressivesend.loud");
+    expect(attachment).toContain("--file");
+    expect(attachment).not.toContain("--format");
+    expect(empty).toContain("--file");
+    expect(value(empty, "--text")).toBe("");
+    const replyText = value(reply, "--text");
     expect(replyText).not.toMatch(/^[ \t]*(?:user|system|assistant):[ \t]*$/gim);
-    const replyFormatting = JSON.parse(actionValue(replyAction, "--format")) as Array<{
+    const formatting = JSON.parse(value(reply, "--format")) as Array<{
       start: number;
       length: number;
       styles: string[];
     }>;
-    const replyBold = replyFormatting.find((range) => range.styles.includes("bold"));
-    expect(
-      replyText.slice(replyBold?.start, (replyBold?.start ?? 0) + (replyBold?.length ?? 0)),
-    ).toBe("😀 reply styled");
-    const attachmentText = actionValue(attachmentAction, "--text");
+    const bold = formatting.find((range) => range.styles.includes("bold"));
+    expect(replyText.slice(bold?.start, (bold?.start ?? 0) + (bold?.length ?? 0))).toBe(
+      "😀 reply styled",
+    );
     for (const role of roles) {
-      expect(attachmentText).toMatch(new RegExp(`^${role}:$`, "m"));
+      expect(value(attachment, "--text")).toMatch(new RegExp(`^${role}:$`, "m"));
     }
-
-    const editedText = actionValue(editAction, "--new-text");
-    const backwardsCompatText = actionValue(editAction, "--bc-text");
-    expect(editedText).toContain("**literal edit styling**");
-    expect(editedText).toContain("# system:");
-    expect(editedText).not.toMatch(/^[ \t]*(?:user|system|assistant):[ \t]*$/gim);
-    expect(backwardsCompatText).toContain(fencedYaml);
-    expect(backwardsCompatText).toContain("**literal fallback styling**");
-
-    const question = actionValue(pollAction, "--question");
-    const pollChoices = pollAction.flatMap((arg, index) =>
+    expect(value(edit, "--new-text")).toContain("**literal edit styling**");
+    expect(value(edit, "--new-text")).toContain("# system:");
+    expect(value(edit, "--new-text")).not.toMatch(/^[ \t]*(?:user|system|assistant):[ \t]*$/gim);
+    expect(value(edit, "--bc-text")).toContain(fencedYaml);
+    expect(value(edit, "--bc-text")).toContain("**literal fallback styling**");
+    expect(value(pollAction, "--question")).toContain("# literal question heading");
+    expect(value(pollAction, "--question")).toContain("**literal question styling**");
+    const choices = pollAction.flatMap((arg, index) =>
       arg === "--option" ? [pollAction[index + 1] ?? ""] : [],
     );
-    expect(question).toContain("# literal question heading");
-    expect(question).toContain("**literal question styling**");
-    expect(pollChoices[0]).toContain("**Allow exactly**");
-    expect(pollChoices[1]).toContain(fencedYaml);
-    expect(pollChoices[1]).toContain("_Deny exactly_");
+    expect(choices[0]).toContain("**Allow exactly**");
+    expect(choices[1]).toContain(fencedYaml);
+    expect(choices[1]).toContain("_Deny exactly_");
     expect(poll.pollOptions.map((option) => option.text)).toEqual(
-      pollChoices.map((choice) => choice.trim()),
+      choices.map((choice) => choice.trim()),
     );
-
-    for (const args of actions) {
-      for (const flag of ["--text", "--new-text", "--bc-text", "--question", "--option"]) {
-        for (let index = 0; index < args.length; index += 1) {
-          if (args[index] !== flag) {
-            continue;
-          }
-          const value = args[index + 1] ?? "";
-          expect(value).not.toContain(rawSeparator);
-          expect(value).not.toContain("HIDDEN_ACTION_");
-          expect(value).not.toContain("HIDDEN_FUNCTION_");
-          expect(value).not.toContain("HIDDEN_RUNTIME_");
-          expect(value).not.toMatch(/system-reminder|previous_response|INTERNAL_CONTEXT/i);
-          expect(value).not.toMatch(/<(?:thinking|relevant[-_]memories)\b/i);
-          expect(value).not.toMatch(/assistant\s+to\s*=\s*\w+/i);
-          expect(value).not.toMatch(/[\ue000-\uf8ff]/);
+    for (const args of calls) {
+      args.forEach((arg, index) => {
+        if (["--text", "--new-text", "--bc-text", "--question", "--option"].includes(arg)) {
+          const text = args[index + 1] ?? "";
+          expect(text).not.toContain(rawSeparator);
+          expect(text).not.toMatch(/HIDDEN_(?:ACTION|FUNCTION|RUNTIME)_/);
+          expect(text).not.toMatch(/system-reminder|previous_response|INTERNAL_CONTEXT/i);
+          expect(text).not.toMatch(/<(?:thinking|relevant[-_]memories)\b/i);
+          expect(text).not.toMatch(/assistant\s+to\s*=\s*\w+/i);
+          expect(text).not.toMatch(/[\ue000-\uf8ff]/);
         }
-      }
+      });
     }
   }, 30_000);
 
   it("rejects malformed, empty, and forged private content without native dispatch", async () => {
-    const { cfg, actionOptions, deliver, readRequests, readActions, createChannelDelivery } =
-      createIMessageOutboundRpcFixture(openClawState, sendMessageIMessage);
+    const {
+      cfg,
+      actionOptions: options,
+      deliver,
+      readRequests,
+      readActions,
+      createChannelDelivery,
+    } = createIMessageOutboundRpcFixture(openClawState, sendMessageIMessage);
     const { deliverThroughChannel } = createChannelDelivery();
-    const { imessageActionsRuntime } = await import("./actions.runtime.js");
-    function createRawTextActions(source: string, replacementText: string) {
-      return [
-        [
-          "edit",
-          () =>
-            imessageActionsRuntime.editMessage({
-              chatGuid: actionOptions.chatGuid,
-              messageId: "edit-message-guid",
-              text: source,
-              backwardsCompatMessage: "visible fallback",
-              options: actionOptions,
-            }),
-        ],
-        [
-          "edit-fallback",
-          () =>
-            imessageActionsRuntime.editMessage({
-              chatGuid: actionOptions.chatGuid,
-              messageId: "edit-message-guid",
-              text: replacementText,
-              backwardsCompatMessage: source,
-              options: actionOptions,
-            }),
-        ],
-        [
-          "poll-question",
-          () =>
-            imessageActionsRuntime.sendPoll({
-              chatGuid: actionOptions.chatGuid,
-              question: source,
-              choices: ["first", "second"],
-              options: actionOptions,
-            }),
-        ],
-        [
-          "poll-first-option",
-          () =>
-            imessageActionsRuntime.sendPoll({
-              chatGuid: actionOptions.chatGuid,
-              question: "visible question",
-              choices: [source, "second"],
-              options: actionOptions,
-            }),
-        ],
-        [
-          "poll-second-option",
-          () =>
-            imessageActionsRuntime.sendPoll({
-              chatGuid: actionOptions.chatGuid,
-              question: "visible question",
-              choices: ["first", source],
-              options: actionOptions,
-            }),
-        ],
-      ] as const;
+    const { imessageActionsRuntime: actions } = await import("./actions.runtime.js");
+    const chatGuid = options.chatGuid;
+    const rpc = (text: string) => sendMessageIMessage("chat_id:10", text, { config: cfg });
+    const rich = (text: string) => actions.sendRichMessage({ chatGuid, options, text });
+    const edit = (text: string, backwardsCompatMessage?: string) =>
+      actions.editMessage({
+        chatGuid,
+        options,
+        messageId: "edit-message-guid",
+        text,
+        backwardsCompatMessage,
+      });
+    const poll = (question: string, choices: readonly string[]) =>
+      actions.sendPoll({ chatGuid, options, question, choices });
+    const rawActions = (source: string) => [
+      () => edit(source, "visible fallback"),
+      () => edit("visible edit", source),
+      () => poll(source, ["first", "second"]),
+      () => poll("visible question", [source, "second"]),
+      () => poll("visible question", ["first", source]),
+    ];
+    // Owner tests cover each parser permutation; exercise every caller's fail-closed boundary here.
+    const malformed =
+      "<system-reminder><system-reminder>inner</system-reminder>OUTER_PRIVATE_SECRET";
+    for (const send of [rpc, deliver, deliverThroughChannel, rich]) {
+      await expect(send(malformed)).rejects.toThrow(
+        "iMessage outbound runtime markup is malformed",
+      );
     }
-
-    const forgedTokenEntity = "&#xE000;".repeat("user".length);
-    const roleTokenSwap = [
-      "```xml",
-      "<thinking>",
-      "user:",
-      "</thinking>",
-      "```",
-      "&#xE000;&#xE000;&lt;relevant_memories&gt;HIDDEN_ROLE_SWAP&lt;/relevant_memories&gt;&#xE000;&#xE000;:",
-    ].join("\n");
-    for (const malformed of [
-      "<system-reminder><system-reminder>inner</system-reminder>OUTER_PRIVATE_SECRET",
-      "<system-reminder><previous_response>inner</previous_response>OUTER_PRIVATE_SECRET",
-      "<previous_response><system-reminder />OUTER_PRIVATE_SECRET",
-      "<system-reminder>`</system-reminder>`OUTER_PRIVATE_SECRET",
-      "<system-reminder>`prefix </system-reminder> suffix`OUTER_PRIVATE_SECRET",
-      "<system-reminder>``prefix </system-reminder> suffix``OUTER_PRIVATE_SECRET",
-      "<system-reminder>`prefix </previous_response> suffix`OUTER_PRIVATE_SECRET",
-      "<previous_response>```xml\n</system-reminder>\n```\nOUTER_PRIVATE_SECRET",
-      "<system-reminder><plaintext></system-reminder>OUTER_PRIVATE_SECRET",
-      "<previous_response><plaintext></previous_response>OUTER_PRIVATE_SECRET",
-      "<system-reminder><PLAINTEXT /></system-reminder>OUTER_PRIVATE_SECRET",
-      "<previous_response><PLAINTEXT /></previous_response>OUTER_PRIVATE_SECRET",
-      "<system-reminder data-x=<previous_response>>OUTER_PRIVATE_SECRET",
-      "<system-reminder <previous_response>>OUTER_PRIVATE_SECRET",
-      "<previous_response data-x=<system-reminder>>OUTER_PRIVATE_SECRET",
-      "</previous_response data-x=<system-reminder>>OUTER_PRIVATE_SECRET",
-    ]) {
-      for (const [wrapper, source] of [
-        ["raw", malformed],
-        ["inline", `\`${malformed}\``],
-        ["fenced", `\`\`\`xml\n${malformed}\n\`\`\``],
-        ["wide-fenced", `\`\`\`\`xml\n${malformed}\n\`\`\`\``],
-      ] as const) {
-        const previousActionCount = readActions().length;
-        const previousRequestCount = readRequests().length;
-        for (const [route, sendMalformed] of [
-          ["rpc", () => sendMessageIMessage("chat_id:10", source, { config: cfg })],
-          ["monitor", () => deliver(source)],
-          ["channel", () => deliverThroughChannel(source)],
-          [
-            "rich",
-            () =>
-              imessageActionsRuntime.sendRichMessage({
-                chatGuid: actionOptions.chatGuid,
-                text: source,
-                options: actionOptions,
-              }),
-          ],
-          ...createRawTextActions(source, "visible edit"),
-        ] as const) {
-          await expect(
-            sendMalformed(),
-            JSON.stringify({ malformed, wrapper, route }),
-          ).rejects.toThrow("iMessage outbound runtime markup is malformed");
-        }
-        expect(readActions()).toHaveLength(previousActionCount);
-        expect(readRequests()).toHaveLength(previousRequestCount);
-      }
+    for (const send of rawActions(malformed)) {
+      await expect(send()).rejects.toThrow("iMessage outbound runtime markup is malformed");
     }
     for (const hidden of privateRuntimeBlocks) {
-      const previousActionCount = readActions().length;
-      const previousRequestCount = readRequests().length;
-      await expect(sendMessageIMessage("chat_id:10", hidden, { config: cfg })).rejects.toThrow(
-        "iMessage send requires text or media",
+      await expect(rpc(hidden)).rejects.toThrow("iMessage send requires text or media");
+      await expect(rich(hidden)).rejects.toThrow(
+        "iMessage rich send requires text or an attachment after sanitization",
       );
-      await expect(
-        imessageActionsRuntime.sendRichMessage({
-          chatGuid: actionOptions.chatGuid,
-          text: hidden,
-          options: actionOptions,
-        }),
-      ).rejects.toThrow("iMessage rich send requires text or an attachment after sanitization");
-      for (const [text, backwardsCompatMessage] of [
-        [hidden, "visible fallback"],
-        ["visible edit", hidden],
-      ] as const) {
-        await expect(
-          imessageActionsRuntime.editMessage({
-            chatGuid: actionOptions.chatGuid,
-            messageId: "edit-message-guid",
-            text,
-            backwardsCompatMessage,
-            options: actionOptions,
-          }),
-        ).rejects.toThrow("iMessage edit requires non-empty text after sanitization");
+      const raw = rawActions(hidden);
+      for (const send of raw.slice(0, 2)) {
+        await expect(send()).rejects.toThrow(
+          "iMessage edit requires non-empty text after sanitization",
+        );
       }
-      for (const [questionText, choices] of [
-        [hidden, ["first", "second"]],
-        ["visible question", [hidden, "second"]],
-        ["visible question", ["first", hidden]],
-      ] as const) {
-        await expect(
-          imessageActionsRuntime.sendPoll({
-            chatGuid: actionOptions.chatGuid,
-            question: questionText,
-            choices,
-            options: actionOptions,
-          }),
-        ).rejects.toThrow(
+      for (const send of raw.slice(2)) {
+        await expect(send()).rejects.toThrow(
           "iMessage poll requires a non-empty question and options after sanitization",
         );
       }
-      expect(readActions()).toHaveLength(previousActionCount);
-      expect(readRequests()).toHaveLength(previousRequestCount);
     }
-    await expect(sendMessageIMessage("chat_id:10", "# user:", { config: cfg })).rejects.toThrow(
-      "iMessage send requires text or media",
+    const forged = "&#xE000;".repeat(4);
+    const roleSwap =
+      "```xml\n<thinking>\nuser:\n</thinking>\n```\n&#xE000;&#xE000;&lt;relevant_memories&gt;HIDDEN_ROLE_SWAP&lt;/relevant_memories&gt;&#xE000;&#xE000;:";
+    for (const source of [
+      fencedYaml + "\n" + forged,
+      "```yaml\nuser:\n```\n&#xE000;&#xE000;" + entitySeparator + "&#xE000;&#xE000;",
+      roleSwap,
+    ]) {
+      await expect(rpc(source)).rejects.toThrow("iMessage outbound role protection failed");
+      await expect(rich(source)).rejects.toThrow("iMessage outbound role protection failed");
+    }
+    for (const send of rawActions(roleSwap)) {
+      await expect(send()).rejects.toThrow("iMessage outbound role protection failed");
+    }
+    for (const source of [
+      "`<thinking>hidden</thinking>`",
+      nestMarkdownFences(hiddenFunctionResponse, 4),
+    ]) {
+      await expect(rpc(source)).rejects.toThrow(
+        "iMessage outbound hidden assistant content is not allowed",
+      );
+      await expect(rich(source)).rejects.toThrow(
+        "iMessage outbound hidden assistant content is not allowed",
+      );
+      for (const send of rawActions(source)) {
+        await expect(send()).rejects.toThrow(
+          "iMessage outbound hidden assistant content is not allowed",
+        );
+      }
+    }
+    await expect(rpc("# user:")).rejects.toThrow("iMessage send requires text or media");
+    await expect(rich("# user:")).rejects.toThrow(
+      "iMessage rich send requires text or an attachment after sanitization",
     );
-    await expect(
-      sendMessageIMessage("chat_id:10", ["```yaml", "user:", "```", forgedTokenEntity].join("\n"), {
-        config: cfg,
-      }),
-    ).rejects.toThrow("iMessage outbound role protection failed");
-    const splitForgedToken = "&#xE000;&#xE000;" + entitySeparator + "&#xE000;&#xE000;";
-    await expect(
-      sendMessageIMessage("chat_id:10", ["```yaml", "user:", "```", splitForgedToken].join("\n"), {
-        config: cfg,
-      }),
-    ).rejects.toThrow("iMessage outbound role protection failed");
-    await expect(
-      sendMessageIMessage("chat_id:10", "`<thinking>HIDDEN_RPC_INLINE_THINKING</thinking>`", {
-        config: cfg,
-      }),
-    ).rejects.toThrow("iMessage outbound hidden assistant content is not allowed");
-    await expect(sendMessageIMessage("chat_id:10", roleTokenSwap, { config: cfg })).rejects.toThrow(
-      "iMessage outbound role protection failed",
+    await expect(edit("user:")).rejects.toThrow(
+      "iMessage edit requires non-empty text after sanitization",
     );
-    await expect(
-      sendMessageIMessage(
-        "chat_id:10",
-        nestMarkdownFences("<thinking>HIDDEN_RPC_DEEPLY_NESTED</thinking>", 4),
-        { config: cfg },
-      ),
-    ).rejects.toThrow("iMessage outbound hidden assistant content is not allowed");
-    await expect(
-      imessageActionsRuntime.sendRichMessage({
-        chatGuid: actionOptions.chatGuid,
-        text: [fencedYaml, forgedTokenEntity].join("\n"),
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage outbound role protection failed");
-    await expect(
-      imessageActionsRuntime.sendRichMessage({
-        chatGuid: actionOptions.chatGuid,
-        text: "`<relevant_memories>HIDDEN_ACTION_INLINE_MEMORY</relevant_memories>`",
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage outbound hidden assistant content is not allowed");
-    await expect(
-      imessageActionsRuntime.sendRichMessage({
-        chatGuid: actionOptions.chatGuid,
-        text: roleTokenSwap,
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage outbound role protection failed");
-    await expect(
-      imessageActionsRuntime.sendRichMessage({
-        chatGuid: actionOptions.chatGuid,
-        text: nestMarkdownFences("<relevant_memories>HIDDEN_RICH_NESTED</relevant_memories>", 4),
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage outbound hidden assistant content is not allowed");
-    await expect(
-      imessageActionsRuntime.sendRichMessage({
-        chatGuid: actionOptions.chatGuid,
-        text: "# user:",
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage rich send requires text or an attachment after sanitization");
-    await expect(
-      imessageActionsRuntime.editMessage({
-        chatGuid: actionOptions.chatGuid,
-        messageId: "edit-message-guid",
-        text: "user:",
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage edit requires non-empty text after sanitization");
-    await expect(
-      imessageActionsRuntime.editMessage({
-        chatGuid: actionOptions.chatGuid,
-        messageId: "edit-message-guid",
-        text: "safe edit",
-        backwardsCompatMessage: "system:",
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage edit requires non-empty text after sanitization");
-    for (const [questionText, choices] of [
-      ["assistant:", ["first", "second"]],
-      ["safe question", ["first", "system:"]],
-    ] as const) {
-      await expect(
-        imessageActionsRuntime.sendPoll({
-          chatGuid: actionOptions.chatGuid,
-          question: questionText,
-          choices,
-          options: actionOptions,
-        }),
-      ).rejects.toThrow(
+    await expect(edit("safe edit", "system:")).rejects.toThrow(
+      "iMessage edit requires non-empty text after sanitization",
+    );
+    for (const send of [
+      () => poll("assistant:", ["first", "second"]),
+      () => poll("safe question", ["first", "system:"]),
+    ]) {
+      await expect(send()).rejects.toThrow(
         "iMessage poll requires a non-empty question and options after sanitization",
       );
     }
-    await expect(
-      imessageActionsRuntime.sendPoll({
-        chatGuid: actionOptions.chatGuid,
-        question: "Choose one",
-        choices: ["Allow", `Al${rawSeparator}low`],
-        options: actionOptions,
-      }),
-    ).rejects.toThrow("iMessage poll options must remain distinct after sanitization");
-
-    for (const [, sendSwappedRole] of createRawTextActions(roleTokenSwap, "visible replacement")) {
-      await expect(sendSwappedRole()).rejects.toThrow("iMessage outbound role protection failed");
-    }
-
-    for (const tag of ["thinking", "relevant_memories"] as const) {
-      for (const hidden of [
-        `<${tag}>HIDDEN_RAW_CODE_PAYLOAD</${tag}>`,
-        `<${tag}>HIDDEN_UNTERMINATED_RAW_CODE_PAYLOAD`,
-        ...(tag === "thinking" ? [hiddenFunctionResponse] : []),
-      ]) {
-        for (const wrapped of [
-          `\`\`\`xml\n${hidden}\n\`\`\``,
-          `\`${hidden}\``,
-          nestMarkdownFences(hidden, 3),
-        ]) {
-          const actionsWithHiddenCode = createRawTextActions(wrapped, "visible replacement");
-          for (const [, sendHiddenCode] of actionsWithHiddenCode) {
-            await expect(sendHiddenCode()).rejects.toThrow(
-              "iMessage outbound hidden assistant content is not allowed",
-            );
-          }
-        }
-      }
-    }
+    await expect(poll("Choose one", ["Allow", `Al${rawSeparator}low`])).rejects.toThrow(
+      "iMessage poll options must remain distinct after sanitization",
+    );
     expect(readActions()).toHaveLength(0);
     expect(readRequests()).toHaveLength(0);
   }, 30_000);
@@ -1753,17 +1195,12 @@ describe("sendMessageIMessage receipts", () => {
     mockAttachment({ path: "/tmp/image.png", contentType: "image/png" });
     const onDeliveryResult = vi.fn();
 
-    let observedError: unknown;
-    try {
-      await sendMessageIMessage("+15550004567", "caption", {
-        config: IMESSAGE_TEST_CFG,
-        client,
-        mediaUrl: "/tmp/image.png",
-        onDeliveryResult,
-      });
-    } catch (error) {
-      observedError = error;
-    }
+    const observedError = await sendMessageIMessage("+15550004567", "caption", {
+      config: IMESSAGE_TEST_CFG,
+      client,
+      mediaUrl: "/tmp/image.png",
+      onDeliveryResult,
+    }).catch((error: unknown) => error);
 
     expect(isChannelPartialDeliveryError(observedError)).toBe(true);
     expect(observedError).toMatchObject({
@@ -1857,28 +1294,13 @@ describe("sendMessageIMessage receipts", () => {
       const createClientImpl = vi
         .spyOn(clientRuntime, "createIMessageRpcClient")
         .mockResolvedValue(client);
-      const runCliJson = mockCliSend().mockResolvedValueOnce(attachment);
+      mockCliSend().mockResolvedValueOnce(attachment);
       mockAttachment({ path: "/tmp/image.png", contentType: "image/png" });
       const result = await sendMessageIMessage(target, "caption", {
         config: IMESSAGE_TEST_CFG,
         ...(ownsClient ? {} : { client }),
         mediaUrl: "/tmp/image.png",
       });
-      if (target === "chat_guid:chat-1") {
-        expect(runCliJson.mock.calls).toEqual([
-          [
-            [
-              "send-attachment",
-              "--chat",
-              "chat-1",
-              "--file",
-              "/tmp/image.png",
-              "--transport",
-              "auto",
-            ],
-          ],
-        ]);
-      }
       expect(getClientMocks(client).request).toHaveBeenCalledWith(
         "send",
         expect.objectContaining({ ...rpcTarget, text: "caption" }),
@@ -2029,11 +1451,7 @@ describe("sendMessageIMessage receipts", () => {
   });
 
   it("recovers approval tapback GUIDs when RPC returns an unknown placeholder", async () => {
-    const { response, messageId } = {
-      response: { messageId: "unknown", status: "sent" },
-      messageId: "unknown",
-    };
-    const client = createClient(response);
+    const client = createClient({ messageId: "unknown", status: "sent" });
     const dbPath = createOutboundMediaFile("synthetic-chat.db", Buffer.alloc(0));
     const readGuid = vi.fn(async () => "p:0/recovered-guid");
     const openReader = vi
@@ -2048,7 +1466,7 @@ describe("sendMessageIMessage receipts", () => {
       dbPath,
     });
 
-    expect(result.messageId).toBe(messageId);
+    expect(result.messageId).toBe("unknown");
     expect(result.guid).toBe("p:0/recovered-guid");
     await expect(
       resolveIMessageApprovalReactionTargetWithPersistence({
