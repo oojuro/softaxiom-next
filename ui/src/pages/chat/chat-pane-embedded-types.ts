@@ -20,6 +20,7 @@ import type {
 import type { ChatPageHost } from "./chat-state-host.ts";
 import type { ChatProps } from "./chat-view-frame.ts";
 import type { ChatContextPanelProps } from "./components/chat-context-panel.tsx";
+import type { ChatProcessShowRequest } from "./components/chat-details-types.ts";
 import type { ChatModelControlsProps } from "./components/chat-model-controls.tsx";
 import type { SessionWorkspaceState } from "./components/chat-session-workspace-types.ts";
 import type {
@@ -62,6 +63,8 @@ export type SidebarPanelDefinitionParams = {
   contextPresented?: PresentationValue;
   contextDetails?: ChatContextPanelProps["details"];
   subagentsAvailable: boolean;
+  processesShowRequest?: () => ChatProcessShowRequest | undefined;
+  onBackToProcessDetails?: () => void;
   subagentsShowRequest?: () => string | null | undefined;
   onSubagentSessionSelect: (
     sessionKey: string,
