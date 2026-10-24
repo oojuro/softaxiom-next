@@ -46,6 +46,7 @@ import {
 type CompactParams = Parameters<ContextEngine["compact"]>[0];
 type NativeCompaction = NonNullable<CliCompactionTestDeps["maybeCompactAgentHarnessSession"]>;
 type CompactResult = NonNullable<Awaited<ReturnType<ContextEngine["compact"]>>["result"]>;
+type Scenario = Awaited<ReturnType<typeof prepare>>;
 const successfulCompaction = (result: CompactResult) => ({ ok: true, compacted: true, result });
 const expectCallContaining = (mock: unknown, expected: unknown) =>
   expect(mock).toHaveBeenCalledWith(expect.objectContaining(expected));
@@ -86,19 +87,13 @@ describe("runCliTurnCompactionLifecycle", () => {
   const prepareSuccessor = async (
     suffix: string,
     result: (
-      target: Pick<
-        Awaited<ReturnType<typeof prepareScenario>>,
-        "sessionId" | "sessionKey" | "storePath"
-      >,
+      target: Pick<Scenario, "sessionId" | "sessionKey" | "storePath">,
     ) => Awaited<ReturnType<ContextEngine["compact"]>> | ReturnType<ContextEngine["compact"]>,
   ) => {
-    const scenario: Awaited<ReturnType<typeof prepareScenario>> = await prepareScenario(
-      `cli-successor-${suffix}`,
-      {
-        compact: async () => result(scenario),
-        recordCliCompactionInStore: vi.fn(async (input) => input.sessionStore[input.sessionKey]),
-      },
-    );
+    const scenario: Scenario = await prepareScenario(`cli-successor-${suffix}`, {
+      compact: async () => result(scenario),
+      recordCliCompactionInStore: vi.fn(async (input) => input.sessionStore[input.sessionKey]),
+    });
     return scenario;
   };
 
