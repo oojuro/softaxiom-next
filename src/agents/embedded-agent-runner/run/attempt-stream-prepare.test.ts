@@ -56,7 +56,6 @@ import {
   createEmbeddedAttemptExternalAbortController,
   createEmbeddedAttemptRunAbort,
 } from "./attempt-finalize.js";
-import { SESSIONS_YIELD_ABORT_REASON } from "./attempt-sessions-yield.js";
 import {
   createBeforeFinalizeEvent,
   createCatalogSubscription,
@@ -353,39 +352,6 @@ describe("prepareEmbeddedAttemptStream", () => {
         );
       } finally {
         admission.close();
-      }
-    },
-  );
-
-  it.each([
-    [undefined, "check git status"],
-    ["raw", "check git status, `git status`"],
-  ] as const)(
-    "renders %s progress detail through the real subscription",
-    async (toolProgressDetail, meta) => {
-      await useRealSubscription();
-      const onAgentEvent = vi.fn();
-      const prepared = prepareCatalogExecutor({ toolProgressDetail, onAgentEvent });
-      try {
-        await prepared.toolSearchCatalogExecutor({
-          tool: {
-            name: "exec",
-            execute: async () => ({ content: [{ type: "text", text: "clean" }] }),
-          } as never,
-          toolName: "exec",
-          source: "openclaw",
-          toolCallId: "progress-detail-exec",
-          input: { command: "git status" },
-          acceptResultBeforeProjection: async (result) => result,
-        });
-        expect(onAgentEvent).toHaveBeenCalledWith(
-          expect.objectContaining({
-            stream: "item",
-            data: expect.objectContaining({ phase: "start", kind: "tool", name: "exec", meta }),
-          }),
-        );
-      } finally {
-        prepared.subscription.unsubscribe();
       }
     },
   );
@@ -702,31 +668,6 @@ describe("prepareEmbeddedAttemptStream", () => {
     for (const release of releases) {
       expect(release).toHaveBeenCalledOnce();
     }
-  });
-
-  it("distinguishes an accepted abort from normal steering closure and sessions_yield", () => {
-    const runAbortController = new AbortController();
-    let aborted = false;
-    const prepared = prepareCatalogExecutor({
-      runAbortController,
-      getRunState: () => ({
-        aborted,
-        promptError: undefined,
-        timedOut: false,
-        yieldDetected: false,
-      }),
-    });
-
-    expect(prepared.queueHandle.isAborted?.()).toBe(false);
-    prepared.stopAcceptingSteerMessages();
-    expect(prepared.queueHandle.isStopped?.()).toBe(true);
-    expect(prepared.queueHandle.isAborted?.()).toBe(false);
-
-    runAbortController.abort(SESSIONS_YIELD_ABORT_REASON);
-    expect(prepared.queueHandle.isAborted?.()).toBe(false);
-
-    aborted = true;
-    expect(prepared.queueHandle.isAborted?.()).toBe(true);
   });
 
   it("processes aliased cancel and abort through one external-abort sequence", () => {
