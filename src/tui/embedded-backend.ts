@@ -1302,6 +1302,9 @@ export class EmbeddedTuiBackend implements TuiBackend {
           message,
           sessionKey: canonicalKey,
           agentId,
+          // This backend admits input from the local OS operator. Session
+          // audience and outbound delivery remain separate host-owned decisions.
+          senderIsOwner: true,
           ...(entry?.sessionId ? { sessionId: entry.sessionId } : {}),
           thinking: opts.thinking,
           deliver: opts.deliver,

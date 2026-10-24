@@ -602,6 +602,29 @@ describe("EmbeddedTuiBackend", () => {
     expect(buildModelsListResultMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { sessionKey: "agent:main:main", deliver: false },
+    { sessionKey: "agent:main:tui-new-owner-conversation", deliver: false },
+    { sessionKey: "agent:main:telegram:group:123", deliver: true },
+  ])("admits local operator input without inferring authority from $sessionKey", async (input) => {
+    agentCommandFromIngressMock.mockResolvedValue({ payloads: [{ text: "done" }], meta: {} });
+    const backend = new EmbeddedTuiBackend();
+    backend.start();
+    try {
+      await flushMicrotasks();
+      await backend.sendChat({ ...input, message: "local operator input", runId: "local-owner" });
+      await vi.waitFor(() => expect(agentCommandFromIngressMock).toHaveBeenCalledTimes(1));
+      expect(agentCommandFromIngressMock.mock.calls[0]?.[0]).toMatchObject({
+        sessionKey: input.sessionKey,
+        senderIsOwner: true,
+        deliver: input.deliver,
+        allowModelOverride: false,
+      });
+    } finally {
+      await backend.stop();
+    }
+  });
+
   it("bridges assistant and lifecycle events into chat events", async () => {
     const pending = deferred<EmbeddedAgentResult>();
     agentCommandFromIngressMock.mockReturnValueOnce(pending.promise);
