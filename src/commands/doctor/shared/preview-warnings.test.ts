@@ -46,12 +46,7 @@ type TestManifestRecord = {
 
 const manifestState = vi.hoisted(() => ({
   plugins: [] as TestManifestRecord[],
-  diagnostics: [] as Array<{ level: string; message: string; source: string }>,
 }));
-
-const staleOAuthShadowState = vi.hoisted(() => ({ warnings: [] as string[] }));
-
-const staleAuthOrderState = vi.hoisted(() => ({ warnings: [] as string[] }));
 
 const repairMergedGatewayOwnerProfile = vi.hoisted(() => vi.fn());
 
@@ -171,25 +166,18 @@ vi.mock("./stale-plugin-config.js", async (importOriginal) => ({
         ) === index,
     );
   },
-  isStalePluginAutoRepairBlocked: () =>
-    manifestState.diagnostics.some((diagnostic) => diagnostic.level === "error"),
+  isStalePluginAutoRepairBlocked: () => false,
 }));
 
 // mock-isolation: Script warning output without reading host auth stores.
 vi.mock("./stale-oauth-profile-shadows.js", () => ({
-  scanStaleOAuthProfileShadows: () => ({
-    hits: staleOAuthShadowState.warnings.map((warning, index) => ({
-      profileId: String(index),
-      warning,
-    })),
-    warnings: [],
-  }),
+  scanStaleOAuthProfileShadows: () => ({ hits: [], warnings: [] }),
   collectStaleOAuthProfileShadowWarnings: ({ hits }: { hits: Array<{ warning: string }> }) =>
     hits.map((hit) => hit.warning),
 }));
 
 vi.mock("./stale-auth-order.js", () => ({
-  collectStaleConfiguredAuthOrderWarnings: () => staleAuthOrderState.warnings,
+  collectStaleConfiguredAuthOrderWarnings: () => [],
 }));
 
 vi.mock("./codex-route-warnings.js", () => ({ collectCodexRouteWarnings: vi.fn(() => []) }));
@@ -229,9 +217,6 @@ function expectWarningsContaining(warnings: string[], texts: string[]): void {
 describe("doctor preview warnings", () => {
   beforeEach(() => {
     manifestState.plugins = [manifest("discord")];
-    manifestState.diagnostics = [];
-    staleOAuthShadowState.warnings = [];
-    staleAuthOrderState.warnings = [];
     repairMergedGatewayOwnerProfile.mockReset().mockReturnValue({
       repaired: false,
       changes: [],
